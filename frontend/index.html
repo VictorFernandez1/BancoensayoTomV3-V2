@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TOMV3 + Banco de Ensayo</title>
+
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────────────────────────────────────── -->
+<div class="bg-primary text-white px-4 py-3 d-flex align-items-center justify-content-between mb-3">
+    <h1 class="h4 mb-0">
+        <i class="bi bi-graph-up"></i> TOMV3
+        <span class="text-white-50 fw-light">+</span>
+        <i class="bi bi-robot"></i> Banco de Ensayo
+    </h1>
+    <span id="connection-status" class="badge bg-secondary">
+        <i class="bi bi-circle-fill"></i> Connecting…
+    </span>
+</div>
+
+<div class="container-fluid px-4">
+
+    <!-- ── Tab navigation ─────────────────────────────────────────────── -->
+    <ul class="nav nav-tabs mb-3" id="mainTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="tab-principal-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-principal"
+                    type="button" role="tab">
+                <i class="bi bi-sliders"></i> Principal
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-graficas-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-graficas"
+                    type="button" role="tab">
+                <i class="bi bi-graph-up-arrow"></i> Gráficas
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-banco-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-banco"
+                    type="button" role="tab">
+                <i class="bi bi-robot"></i> Banco de Ensayo
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-camara-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-camara"
+                    type="button" role="tab">
+                <i class="bi bi-camera-video"></i> Cámara
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="mainTabContent">
+
+        <!-- ════════════════════════════════════════════════════════════
+              TAB 1 — PRINCIPAL (TOMV3 controls + log)
+             ════════════════════════════════════════════════════════════ -->
+        <div class="tab-pane fade show active" id="tab-principal" role="tabpanel">
+            <div class="row">
+
+                <!-- Left column: controls -->
+                <div class="col-lg-5">
+
+                    <!-- Serial Connection -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-light">
+                            <i class="bi bi-usb-plug"></i> Conexión Serial (TOMV3)
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label for="port-select" class="form-label">Puerto COM:</label>
+                                <select id="port-select" class="form-select">
+                                    <option value="">Seleccionar puerto…</option>
+                                </select>
+                            </div>
+                            <div class="d-flex gap-2 align-items-center">
+                                <button id="btn-refresh-ports" class="btn btn-outline-secondary btn-sm flex-fill">
+                                    <i class="bi bi-arrow-clockwise"></i> Refrescar
+                                </button>
+                                <button id="btn-connect" class="btn btn-success btn-sm flex-fill">
+                                    <i class="bi bi-plug"></i> Conectar
+                                </button>
+                                <button id="btn-disconnect" class="btn btn-danger btn-sm flex-fill" style="display:none;">
+                                    <i class="bi bi-dash-circle"></i> Desconectar
+                                </button>
+                                <span id="serialStatus" class="badge bg-danger ms-1">
+                                    <i class="bi bi-x-circle-fill"></i> Disconnected
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Experiment Parameters -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-light">
+                            <i class="bi bi-sliders"></i> Parámetros TOMV3
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="form-label form-label-sm">TMin:</label>
+                                    <input type="number" id="param-tmin" class="form-control form-control-sm" value="200">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label form-label-sm">TMax:</label>
+                                    <input type="number" id="param-tmax" class="form-control form-control-sm" value="400">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label form-label-sm">VMin:</label>
+                                    <input type="number" id="param-vmin" class="form-control form-control-sm" value="0.5" step="0.1">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label form-label-sm">VMax:</label>
+                                    <input type="number" id="param-vmax" class="form-control form-control-sm" value="1.5" step="0.1">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label form-label-sm">Steps:</label>
+                                    <input type="number" id="param-steps" class="form-control form-control-sm" value="21">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label form-label-sm">Cycles (VN):</label>
+                                    <input type="number" id="param-cycles" class="form-control form-control-sm" value="4">
+                                </div>
+                            </div>
+                            <div class="mt-2">
+                                <label class="form-label form-label-sm">Tipo de barrido:</label>
+                                <select id="sweep-type" class="form-select form-select-sm">
+                                    <option value="TR">TR (Triangular)</option>
+                                    <option value="SQ">SQ (Cuadrada)</option>
+                                    <option value="SWT">SWT (Sierra)</option>
+                                    <option value="SN">SN (Seno)</option>
+                                </select>
+                            </div>
+                            <div class="d-grid mt-2">
+                                <button id="btn-send-params" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-send"></i> Enviar Parámetros
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Export -->
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <div class="d-grid">
+                                <button id="btn-export" class="btn btn-info btn-sm">
+                                    <i class="bi bi-download"></i> Exportar datos (CSV manual)
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div><!-- /left column -->
+
+                <!-- Right column: manual experiment + log -->
+                <div class="col-lg-7">
+
+                    <!-- Manual Experiment Control -->
+                    <div class="card mb-3" id="manualExperimentCard">
+                        <div class="card-header bg-light">
+                            <i class="bi bi-play-circle"></i> Control de Experimento Manual
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label for="manual-sample-name" class="form-label form-label-sm">Nombre de muestra:</label>
+                                <input type="text" id="manual-sample-name" class="form-control" placeholder="Ej: Aire, Cafe, Muestra_01">
+                            </div>
+                            <div class="small text-muted mb-3">
+                                El preacondicionamiento se tomará desde <strong>Banco de Ensayo → Parámetros del Experimento</strong>.
+                            </div>
+                            <div id="manual-timer-container" style="display:none;" class="mb-3">
+                                <div class="d-flex justify-content-between small mb-1">
+                                    <span class="text-muted">Progreso estimado del experimento manual</span>
+                                    <span id="manual-timer-text" class="text-muted">--:--</span>
+                                </div>
+                                <div class="progress" style="height:6px;">
+                                    <div id="manual-timer-progress"
+                                         class="progress-bar bg-success"
+                                         role="progressbar" style="width:0%"></div>
+                                </div>
+                            </div>
+                            <button id="btn-start-manual-exper" class="btn btn-success w-100">
+                                <i class="bi bi-play-fill"></i> INICIAR EXPERIMENTO MANUAL
+                            </button>
+                            <button id="btn-stop-manual-exper" class="btn btn-danger w-100" style="display:none;">
+                                <i class="bi bi-stop-fill"></i> CANCELAR EXPERIMENTO MANUAL
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Communication Log -->
+                    <div class="card">
+                        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-terminal"></i> Log de Comunicación</span>
+                            <button id="btn-clear-log" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-trash"></i> Limpiar
+                            </button>
+                        </div>
+                        <div class="card-body p-0">
+                            <div id="log-terminal" class="log-terminal"></div>
+                        </div>
+                    </div>
+
+                </div><!-- /right column -->
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════
+              TAB 2 — GRÁFICAS
+             ════════════════════════════════════════════════════════════ -->
+        <div class="tab-pane fade" id="tab-graficas" role="tabpanel">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <i class="bi bi-graph-up-arrow"></i> Gráficas en Tiempo Real (6 canales)
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3"><canvas id="chart-0"></canvas></div>
+                        <div class="col-md-6 mb-3"><canvas id="chart-1"></canvas></div>
+                        <div class="col-md-6 mb-3"><canvas id="chart-2"></canvas></div>
+                        <div class="col-md-6 mb-3"><canvas id="chart-9"></canvas></div>
+                        <div class="col-md-6 mb-3"><canvas id="chart-10"></canvas></div>
+                        <div class="col-md-6 mb-3"><canvas id="chart-11"></canvas></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════
+              TAB 3 — BANCO DE ENSAYO
+             ════════════════════════════════════════════════════════════ -->
+        <div class="tab-pane fade" id="tab-banco" role="tabpanel">
+            <div class="row">
+
+                <!-- Left: Pi connection + positions -->
+                <div class="col-lg-6">
+
+                    <!-- ESP32 BLE Connection -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-light">
+                            <i class="bi bi-bluetooth"></i> ESP32 BLE Stepper
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-2">
+                                <label for="ble-address" class="form-label form-label-sm mb-1">MAC Address (opcional):</label>
+                                <input type="text" id="ble-address" class="form-control form-control-sm" placeholder="AA:BB:CC:DD:EE:FF">
+                            </div>
+                            <div class="d-flex gap-2 align-items-center">
+                                <button id="connectEspBtn" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-plug"></i> Conectar
+                                </button>
+                                <span id="espStatus" class="badge bg-danger">
+                                    <i class="bi bi-x-circle-fill"></i> Desconectado
+                                </span>
+                                <span id="configStatus" class="badge bg-secondary ms-auto">—</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sample Positions -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-light">
+                            <i class="bi bi-grid-3x2-gap"></i> Posiciones de Muestras
+                        </div>
+                        <div class="card-body p-0">
+                            <table class="table table-sm table-bordered mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th class="ps-3">Activar</th>
+                                        <th>Pos.</th>
+                                        <th>Nombre de muestra</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="positionsTable"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div><!-- /left -->
+
+                <!-- Right: Experiment settings -->
+                <div class="col-lg-6">
+
+                    <!-- Integrated Experiment Control -->
+                    <div class="card mb-3" id="experimentCard">
+                        <div class="card-header bg-light">
+                            <i class="bi bi-play-circle"></i> Control de Experimento Integrado
+                        </div>
+                        <div class="card-body">
+                            <div class="row align-items-center mb-3">
+                                <div class="col-auto">
+                                    <div class="text-muted small">Posición actual</div>
+                                    <div id="positionDisplay">N/A</div>
+                                </div>
+                                <div class="col-auto">
+                                    <div class="text-muted small">Ciclo actual</div>
+                                    <div id="cycleDisplay">N/A</div>
+                                </div>
+                                <div class="col">
+                                    <div class="text-muted small">Muestra actual</div>
+                                    <div id="sampleDisplay" class="text-truncate">—</div>
+                                </div>
+                            </div>
+
+                            <div id="global-timer-container" style="display:none;" class="mb-2">
+                                <div class="d-flex justify-content-between small mb-1">
+                                    <span class="text-muted">Progreso total del experimento</span>
+                                    <span id="global-timer-text" class="text-muted">--:--</span>
+                                </div>
+                                <div class="progress" style="height:6px;">
+                                    <div id="global-timer-progress"
+                                         class="progress-bar bg-primary"
+                                         role="progressbar" style="width:0%"></div>
+                                </div>
+                            </div>
+
+                            <div id="timer-container" style="display:none;" class="mb-3">
+                                <div class="d-flex justify-content-between small mb-1">
+                                    <span id="timer-phase" class="fw-semibold">Fase</span>
+                                    <span id="timer-text" class="text-muted">--:--</span>
+                                </div>
+                                <div class="progress">
+                                    <div id="timer-progress"
+                                         class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+                                         role="progressbar" style="width:0%"></div>
+                                </div>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button id="btn-start-exper" class="btn btn-success flex-fill">
+                                    <i class="bi bi-play-fill"></i> INICIAR EXPERIMENTO
+                                </button>
+                                <button id="btn-stop-exper" class="btn btn-danger flex-fill" style="display:none;">
+                                    <i class="bi bi-stop-fill"></i> CANCELAR
+                                </button>
+                            </div>
+
+                            <div class="mt-2 small text-muted" id="acqDurationHint"></div>
+                        </div>
+                    </div>
+
+                    <!-- Experiment Parameters (Banco) -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-light">
+                            <i class="bi bi-gear"></i> Parámetros del Experimento
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-2">
+                                <label for="desorptionTime" class="form-label form-label-sm">
+                                    Tiempo de desorción (s):
+                                </label>
+                                <input type="number" id="desorptionTime" class="form-control form-control-sm"
+                                       value="60" min="0">
+                            </div>
+                            <div class="mb-2">
+                                <label for="preCondTime" class="form-label form-label-sm">
+                                    Tiempo de preacondicionamiento (s):
+                                </label>
+                                <input type="number" id="preCondTime" class="form-control form-control-sm"
+                                       value="300" min="0">
+                            </div>
+                            <div class="mb-2">
+                                <label for="experimentCycles" class="form-label form-label-sm">
+                                    Ciclos:
+                                </label>
+                                <input type="number" id="experimentCycles" class="form-control form-control-sm"
+                                       value="1" min="1">
+                            </div>
+                            <div class="mb-0">
+                                <label class="form-label form-label-sm">Carpeta de destino (cliente):</label>
+                                <div class="d-flex gap-2 align-items-center">
+                                    <span id="saveFolderDisplay" class="text-muted small flex-fill fst-italic">Carpeta no seleccionada — se usará Descargas del navegador</span>
+                                    <button id="btn-pick-folder" class="btn btn-outline-secondary btn-sm text-nowrap">
+                                        <i class="bi bi-folder2-open"></i> Seleccionar carpeta
+                                    </button>
+                                </div>
+                                <div class="form-text">El CSV se guardará en tu equipo al terminar cada posición.</div>
+                            </div>
+                        </div>
+                    </div>
+
+
+
+
+                </div><!-- /right -->
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════
+              TAB 4 — CÁMARA
+             ════════════════════════════════════════════════════════════ -->
+        <div class="tab-pane fade" id="tab-camara" role="tabpanel">
+            <div class="row justify-content-center">
+                <div class="col-xl-8">
+                    <div class="card mb-3">
+                        <div class="card-header bg-light d-flex align-items-center justify-content-between">
+                            <span><i class="bi bi-camera-video"></i> Vista de Cámara USB</span>
+                            <span id="cameraBadge" class="badge bg-secondary">Verificando…</span>
+                        </div>
+                        <div class="card-body p-0 text-center bg-dark" style="min-height:300px; position:relative;">
+                            <img id="cameraStream"
+                                 alt="Camera stream"
+                                 style="max-width:100%; max-height:70vh; display:block; margin:auto;">
+                            <!-- Error overlay (hidden by default) -->
+                            <div id="cameraError"
+                                 style="display:none; position:absolute; inset:0;
+                                        background:rgba(0,0,0,0.75); color:#fff;
+                                        flex-direction:column; align-items:center;
+                                        justify-content:center; gap:1rem;">
+                                <i class="bi bi-camera-video-off" style="font-size:3rem; opacity:0.7;"></i>
+                                <p class="mb-0 fw-semibold" id="cameraErrorMsg">Cámara desconectada</p>
+                            </div>
+                        </div>
+                        <div class="card-footer d-flex align-items-center justify-content-between">
+                            <span class="text-muted small">El stream se inicia al abrir esta pestaña y se sirve directamente desde el servidor (<code>/api/video</code>).</span>
+                            <button id="btnCameraReconnect"
+                                    class="btn btn-outline-secondary btn-sm ms-3 text-nowrap"
+                                    onclick="reconnectCamera()">
+                                <i class="bi bi-arrow-clockwise"></i> Reconectar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /tab-content -->
+</div><!-- /container-fluid -->
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<!-- Charts -->
+<script src="/static/charts.js"></script>
+<!-- App logic -->
+<script src="/static/app.js"></script>
+
+<script>
+// ── Camera tab helpers ───────────────────────────────────────────────────────
+
+function _setCameraBadge(available, index) {
+    const badge = document.getElementById('cameraBadge');
+    if (available) {
+        badge.className = 'badge bg-success';
+        badge.textContent = `Cámara disponible (índice ${index})`;
+    } else {
+        badge.className = 'badge bg-danger';
+        badge.textContent = 'Sin cámara detectada';
+    }
+}
+
+function reconnectCamera() {
+    const btn = document.getElementById('btnCameraReconnect');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Reconectando…';
+
+    fetch('/api/camera/reconnect', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.available) {
+                document.getElementById('cameraError').style.display = 'none';
+                const img = document.getElementById('cameraStream');
+                img.style.display = 'block';
+                img.src = '/api/video?' + Date.now();   // cache-bust to restart stream
+                _setCameraBadge(true, data.index);
+            } else {
+                document.getElementById('cameraErrorMsg').textContent =
+                    'No se encontró ninguna cámara';
+                _setCameraBadge(false, null);
+            }
+        })
+        .catch(() => {
+            document.getElementById('cameraErrorMsg').textContent =
+                'Error al intentar reconectar';
+        })
+        .finally(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Reconectar';
+        });
+}
+
+// Start stream lazily when the tab is first opened
+document.getElementById('tab-camara-btn').addEventListener('shown.bs.tab', function () {
+    const img = document.getElementById('cameraStream');
+    if (!img.src || img.src === window.location.href) {
+        img.src = '/api/video';
+    }
+});
+
+// Check status on page load — show error overlay immediately if no camera
+fetch('/api/camera/status')
+    .then(r => r.json())
+    .then(data => {
+        _setCameraBadge(data.available, data.index);
+        if (!data.available) {
+            document.getElementById('cameraStream').style.display = 'none';
+            const err = document.getElementById('cameraError');
+            err.style.display = 'flex';
+            document.getElementById('cameraErrorMsg').textContent =
+                'Sin cámara detectada al iniciar';
+        }
+    })
+    .catch(() => {
+        document.getElementById('cameraBadge').className = 'badge bg-secondary';
+        document.getElementById('cameraBadge').textContent = 'Estado desconocido';
+    });
+</script></body>
+</html>
+

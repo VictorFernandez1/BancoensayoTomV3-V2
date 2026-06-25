@@ -1,0 +1,7 @@
+/integratedvenv
+/backend/__pycache__
+/backend/exports
+/backend/main.build
+/backend/main.dist
+/dist
+/build

@@ -1,0 +1,38 @@
+{
+  "serial_port": "COM17",
+  "sweep_type": "TR",
+  "experiment_params": {
+    "TMin": 200,
+    "TMax": 400,
+    "VMin": 0.5,
+    "VMax": 1.5,
+    "Steps": 21,
+    "Cycles": 4
+  },
+  "positions": [
+    {
+      "enabled": true,
+      "name": ""
+    },
+    {
+      "enabled": false,
+      "name": ""
+    },
+    {
+      "enabled": false,
+      "name": ""
+    },
+    {
+      "enabled": false,
+      "name": ""
+    },
+    {
+      "enabled": false,
+      "name": ""
+    }
+  ],
+  "desorption_time": 60.0,
+  "pre_conditioning_time": 300.0,
+  "cycles": 1,
+  "ble_address": ""
+}

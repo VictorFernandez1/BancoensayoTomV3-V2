@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+websockets
+pyserial
+pandas
+aiofiles
+opencv-python
+bleak
+pyinstaller
