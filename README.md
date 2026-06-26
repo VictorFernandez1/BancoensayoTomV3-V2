@@ -11,16 +11,12 @@ The application now supports **two experiment modes**:
 2. **Manual experiment (without Banco motors)**
 
 ### Integrated mode (with Banco)
-1. A one-time **initial desorption** runs before the first measurement: fan ON, wait = configured desorption time, fan OFF.
-2. Before each measurement, the backend sends `GETPOSITION` to the ESP32 to verify alignment.
-3. If `OK`, the arm lowers (`MOVEDOWN`).
-4. If not `OK`, the experiment pauses and the operator chooses **Continuar** (retry) or **Cancelar** (safe stop).
-5. Pre-conditioning wait.
-6. TOMV3 acquisition starts (`EXPER`).
-7. Arm rises, desorption fan turns ON, carousel rotates (if needed), and desorption wait runs.
-8. Fan turns OFF when desorption completes.
-9. Data is auto-saved to CSV.
-10. Sequence repeats for enabled positions and cycles; each cycle returns home.
+Integrated Experiment Controller orchestrates the full measurement workflow:
+
+1. A one-time initial desorption runs before the first measurement: fan ON, wait = configured desorption time, fan OFF.
+2. For each cycle and enabled position, the arm moves in (`MOVEINHOME`), pre-conditioning runs, TOMV3 acquisition starts, the acquisition countdown runs, the arm moves out (`MOVEOUTHOME`), the desorption fan turns ON, the carousel rotates to the next position when needed, and desorption waits.
+3. After desorption, the fan turns OFF and the CSV is auto-saved.
+4. After all positions in a cycle, the system returns home (`ROTATIONALHOMING`).
 
 ### Manual mode (without Banco)
 1. No BLE or motor commands are used.
@@ -54,9 +50,6 @@ The application now supports **two experiment modes**:
 - **Dual progress bars** during an experiment: a green per-phase bar (pre-conditioning / acquisition / desorption) and a blue global bar showing overall experiment progress and time remaining.
 - **Manual experiment completion alerts**: success sound + completion popup at the end of a manual run.
 - **Mutual mode lock**: manual and integrated experiments cannot run at the same time; each start button is disabled while the other mode runs.
-- **Pre-drop position safety gate**: before every `MOVEDOWN`, the backend sends `GETPOSITION`; only `OK` allows movement.
-- **Operator decision popup on position mismatch**: non-`OK` `GETPOSITION` responses show a blocking Continue/Cancel modal. Continue retries `GETPOSITION`; Cancel aborts the experiment safely.
-- **Paused timer visuals during position popup**: while the position-check popup is open, the blue and green progress bars are visually paused and resume when the gate clears.
 - **Accurate position display**: the current position counter shows X/**N** where N is the number of enabled positions, not a fixed 5.
 - **Mid-experiment page reload recovery**: if the browser is reloaded while an experiment is running, the current position, cycle, sample name, global progress bar (blue), and per-phase countdown bar (green) are all restored immediately upon reconnect — the experiment itself never stops.
 - **Auto-send parameters on experiment start**: every time INICIAR EXPERIMENTO is pressed, the backend automatically sends the current TOMV3 sweep parameters to the device, waits 3 seconds, then sends the sweep type — ensuring the device is always configured with the latest values before the first measurement.
@@ -247,7 +240,7 @@ sudo mv ~/cloudflared /usr/local/bin/cloudflared
 
 Then run this command in a separate terminal (while the server is running):
 ```bash
-cloudflared tunnel --url http://localhost:8080
+cloudflared tunnel --url http://localhost:8000
 ```
 
 
@@ -337,7 +330,7 @@ Each plot keeps the last 100 data points.
 3. All other fields are auto-saved to `session.json` as you type (500 ms debounce).
 
 **Posiciones de Muestras**
-- Check the boxes for the positions (1–5) you want to measure.
+- Check the boxes for the positions you want to measure.
 - **Cascading logic**: enabling position N automatically enables all positions before it; disabling N disables all positions after it.
 - Enter a sample name for each enabled position. The name is embedded in the CSV filename.
 
@@ -354,7 +347,7 @@ Each plot keeps the last 100 data points.
 - **INICIAR EXPERIMENTO** keeps the same behavior as before:
   - Requires serial + ESP32 BLE connection.
   - Uses enabled positions, sample names, desorption time and cycles.
-  - Applies position safety gate (`GETPOSITION`) before each `MOVEDOWN`.
+  - The interface shows 12 positions.
   - Shows blue/green progress bars and supports cancellation.
 - If a manual experiment is running, integrated start is disabled.
 
@@ -366,30 +359,25 @@ Each plot keeps the last 100 data points.
 ```
 Initial one-time phase (before cycle 1):
   0. FANON               — start desorption fan
-  1. Initial desorption  — wait configured desorption time
+  1. Initial desorption   — wait configured desorption time
   2. FANOFF              — stop desorption fan
 
 For each cycle (1 … Ciclos):
   For each enabled position (in order):
     1. clear buffers       — TOMV3 data arrays reset
-    2. GETPOSITION         — verify sample position with ESP32
-       - if `OK`: continue
-       - if not `OK`: pause and show Continue/Cancel popup
-       - Continue: retry GETPOSITION
-       - Cancel: abort experiment safely
-    3. MOVEDOWN            — arm lowers onto the sample
-    4. Pre-conditioning    — configurable countdown (default 300 s)
-    5. EXPER               — TOMV3 sweep command sent
-    6. Acquisition wait    — (Steps+1) × VNCycles × 2 + 30 s
-    7. MOVEUP              — arm retracts
-    8. FANON               — start desorption fan (always)
-    9. MOVECLOCKWISE       — ↻ rotate to next position  (skipped after last)
-    10. Desorption wait    — configurable recovery time (always, every position)
-    11. FANOFF             — stop desorption fan
-    12. Auto-save CSV      — downloaded to client device (after desorption)
+    2. MOVEINHOME          — arm lowers onto the sample
+    3. Pre-conditioning    — configurable countdown (default 300 s)
+    4. EXPER               — TOMV3 sweep command sent
+    5. Acquisition wait    — (Steps+1) × VNCycles × 2 + 30 s
+    6. MOVEOUTHOME         — arm retracts
+    7. FANON               — start desorption fan
+    8. MOVECLOCKWISE       — rotate to next position (skipped after last)
+    9. Desorption wait     — configurable recovery time
+    10. FANOFF             — stop desorption fan
+    11. Auto-save CSV      — downloaded to client device (after desorption)
 
   After all positions:
-    13. Return home      — MOVECOUNTERCLOCKWISE × (n_positions − 1)
+    12. ROTATIONALHOMING   — return home
 
 Repeat for remaining cycles.
 ```
@@ -480,7 +468,6 @@ TOMV3D1_File_20260326_130124_Prueba.csv
 | `start_experiment` | `sample_names[]`, `enabled_positions[]`, `desorption_time`, `cycles` | Start integrated experiment |
 | `start_manual_experiment` | `sample_name`, `pre_conditioning_time` | Start manual experiment (no Banco motors) |
 | `cancel_experiment` | — | Request cancellation |
-| `position_check_action` | `action` (`continue` / `cancel`) | User response when experiment is paused by a failed `GETPOSITION` check |
 | `save_config` | `config` | Persist Banco de Ensayo settings |
 | `clear_log` | — | Clear communication log |
 
@@ -495,15 +482,13 @@ TOMV3D1_File_20260326_130124_Prueba.csv
 | `log_cleared` | — | Log was cleared |
 | `connection_status` | `message`, `connected` | ESP32 BLE connection state |
 | `serial_status` | `message`, `connected`, `device_id` (optional), `port` (optional) | TOMV3 serial connection state and connected device label |
-| `position` | `value` (1–5) | Current carousel position |
+| `position` | `value` (1–N) | Current carousel position |
 | `experiment_start` | `total_seconds`, `total_positions` | Experiment loop begins; used by client to start global countdown |
 | `manual_experiment_start` | `sample_name`, `pre_conditioning_seconds`, `acquisition_seconds`, `total_seconds` | Manual experiment started |
 | `experiment_status` | `message` | Current experiment phase description |
 | `timer_start` | `phase`, `total_seconds`, `description` | Countdown phase begins |
 | `timer_update` | `remaining`, `total`, `phase` | Countdown tick |
 | `elapsed_time` | `seconds` | Seconds elapsed in current wait |
-| `position_check_required` | `position`, `sample_name`, `cycle`, `cycles_total`, `response`, `message` | Experiment paused because `GETPOSITION` was not `OK`; client must show Continue/Cancel popup |
-| `position_check_cleared` | — | Position-check pause cleared; retry cycle can proceed |
 | `experiment_complete` | `cancelled` (bool), `message` | Experiment finished or cancelled |
 | `manual_experiment_complete` | `success`, `cancelled`, `sample_name`, `message` | Manual experiment finished |
 | `auto_save_result` | `success`, `filename`, `rows`, `download_url` / `message` | CSV staged on server; client downloads the file |
@@ -523,7 +508,6 @@ Commands sent to the ESP32 (`ESP32_STEPPER`) over BLE — written to the Command
 | `MOVEUP` | Retract linear motor — nose away from sample |
 | `MOVECLOCKWISE` | Rotate carousel to next position |
 | `MOVECOUNTERCLOCKWISE` | Rotate carousel back one position (return-home loop) |
-| `GETPOSITION` | Ask ESP32 to validate whether the current sample position is correct |
 | `STOP` | Immediately halt any in-progress movement |
 | `SETINTERVAL:<µs>` | Set the step pulse interval in microseconds (must be > 1000) |
 
@@ -533,7 +517,7 @@ The ESP32 responds via notifications on the Status characteristic (`AA000003-…
 3. `STOPPED` — movement was halted mid-way by a `STOP` command
 4. `WAIT` — motor busy, command rejected
 5. `INVALID` — unknown or malformed command
-6. `ERROR` (or any non-`OK` result for `GETPOSITION`) — treated by the backend as a failed position check requiring operator action
+6. `ERROR` — treated by the backend as a movement error
 
 ---
 
@@ -564,11 +548,6 @@ The ESP32 responds via notifications on the Status characteristic (`AA000003-…
 
 **Integrated experiment start is disabled**
 - This is expected while a manual experiment is running.
-
-**Experiment pauses with a position popup before MOVEDOWN**
-- Normal behaviour with the safety gate. The backend sends `GETPOSITION` before each drop.
-- If the popup appears, physically correct the sample/carousel alignment, then press **Continuar** to retry `GETPOSITION`.
-- Press **Cancelar** to stop the experiment safely.
 
 **Plots not updating**
 - Verify the serial connection is active (Tab 1).

@@ -81,7 +81,6 @@ class BleController:
     async def send_command_raw(self, command: str) -> str:
         """
         Dispatch a command and return the first ESP32 status token received.
-        Used by GETPOSITION where "OK" is a terminal response.
         """
         cf = asyncio.run_coroutine_threadsafe(self._ble_send_raw(command), self._ble_loop)
         return await asyncio.wrap_future(cf)

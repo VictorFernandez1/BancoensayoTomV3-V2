@@ -2,20 +2,21 @@
 Integrated Experiment Controller
 Orchestrates the full measurement workflow:
 
-  For each cycle × enabled position:
-    1. MOVEDOWN  (motor)
-    2. 300 s pre-conditioning countdown
-    3. clear_and_arm()  (clear TOMV3 buffers + send EXPER)
-                4. Acquisition countdown  = (Steps + 1) × Cycles × 2 + 30 s
-        5. MOVEUP  (motor)
-        6. MOVECLOCKWISE  (skip after last position in cycle)
-        7. Desorption countdown  (always — every position including last)
-        8. Auto-save CSV  →  exports_dir / <device>_File_<ts>_<name>.csv  (downloaded to client)
+    1. A one-time initial desorption runs before the first measurement: fan ON, wait = configured desorption time, fan OFF.
+For each cycle × enabled position:
+    2. Move in the arm (MOVEINHOME).    .
+    3. Pre-conditioning wait.
+    4.  TOMV3 acquisition starts (clear_and_arm()).
+    5. Acquisition countdown  = (Steps + 1) × Cycles × 2 + 30 s
+    6. Move the arm out(Moveouthome), desorption fan turns ON, carousel rotates (if needed), and desorption wait runs.
+    6. MOVECLOCKWISE  (skip after last position in cycle)
+    7. Fan turns OFF when desorption completes.
+    8. Data is auto-saved to CSV.
 
-  After all positions in a cycle:
-    8. Return home  (MOVECOUNTERCLOCKWISE × (n_positions − 1))
+After all positions in a cycle:
+    9. Return home(ROTATIONALHOMING)
 
-  Repeat for the configured number of cycles.
+
 """
 
 import asyncio
@@ -62,15 +63,6 @@ class IntegratedExperimentController:
         self.current_phase_total: int       = 0
         self.current_phase_remaining: int   = 0
 
-        # Position-check gate state (for reconnect + operator decisions)
-        self.position_check_pending: bool = False
-        self.position_check_response: str = ""
-        self.position_check_position: int = 0
-        self.position_check_sample: str = ""
-        self.position_check_cycle: int = 0
-        self.position_check_cycles_total: int = 0
-        self._position_check_event = asyncio.Event()
-        self._position_check_action: str = ""
         self.fan_is_on: bool = False
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -91,7 +83,7 @@ class IntegratedExperimentController:
 
         # Reset cancel flag on controller
         self.banco.cancel_requested = False
-        self.banco.motor_is_down = False
+        self.banco.motor_is_in = False
         self.fan_is_on = False
 
         self.experiment_running = True
@@ -139,18 +131,8 @@ class IntegratedExperimentController:
             return
         await self._log("Cancel requested…")
         self.banco.cancel_requested = True
-        self._position_check_event.set()
         if self._task:
             self._task.cancel()
-
-    async def set_position_check_action(self, action: str):
-        """Operator response while waiting for GETPOSITION validation."""
-        act = (action or "").strip().lower()
-        if act == "continue":
-            self._position_check_action = "continue"
-            self._position_check_event.set()
-        elif act == "cancel":
-            await self.cancel_experiment()
 
     # ── Main sequence ─────────────────────────────────────────────────────────
 
@@ -208,6 +190,34 @@ class IntegratedExperimentController:
         await self._log("=" * 60)
 
         try:
+            # Initial moveouthome to ensure the arm is in a known position before starting the experiment.
+            await self._status("Initial moveouthome…")
+            await self._log("MOVEOUTHOME")
+            ok = await self.banco.send_command("MOVEOUTHOME")
+            self.banco.motor_is_in = False
+            if not ok or self.banco.cancel_requested:
+                await self._log("⚠ MOVEOUTHOME failed — Experiment Cancelled.")
+                await self._status("Initial moveouthome failed, experiment cancelled.")
+                raise asyncio.CancelledError()
+            else:
+                await self._log("✓ MOVEOUTHOME completed successfully.")
+                await self._status("Initial moveouthome completed.")
+
+            # Inital rotational homing to ensure starting position is known
+            await self._status("Initial rotational homing…")
+            await self._log("ROTATIONALHOMING")
+            # Send command and wait for confirmation
+            ok = await self.banco.send_command("ROTATIONALHOMING")
+            if not ok or self.banco.cancel_requested:
+                await self._log("⚠ ROTATIONALHOMING failed — Experiment Cancelled.")
+                await self._status("Initial rotational homing failed, experiment cancelled.")
+                raise asyncio.CancelledError()
+            else:
+                await self._log("✓ ROTATIONALHOMING completed successfully.")
+                #wait self._status("Initial rotational homing completed.")
+
+
+
             # One-time initial desorption before cycle 1 / position 1.
             await self._status(f"Initial desorption ({desorption_time}s)…")
             await self._log("INITIAL DESORPTION PHASE")
@@ -264,23 +274,13 @@ class IntegratedExperimentController:
                     await self.serial.clear()
 
 
-                    # 2. GETPOSITION gate before MOVEDOWN ───────────────────
-                    gate_ok = await self._wait_for_position_ok(
-                        position=position,
-                        sample_label=sample_label,
-                        cycle=cycle,
-                        cycles_total=cycles,
-                    )
-                    if not gate_ok or self.banco.cancel_requested:
-                        break
-
-                    # 3. MOVEDOWN ────────────────────────────────────────────
-                    await self._status(f"Pos {position}: Moving DOWN…")
-                    await self._log("MOVEDOWN")
-                    ok = await self.banco.send_command("MOVEDOWN")
+                    # 2. MOVEINHOME ────────────────────────────────────────────
+                    await self._status(f"Pos {position}: Moving IN…")
+                    await self._log("MOVEINHOME")
+                    ok = await self.banco.send_command("MOVEINHOME")
                     if not ok or self.banco.cancel_requested:
                         break
-                    self.banco.motor_is_down = True
+                    self.banco.motor_is_in = True
                     await asyncio.sleep(0.1)
 
                     # 4. Pre-conditioning countdown ──────────────────────────
@@ -303,11 +303,11 @@ class IntegratedExperimentController:
                     if cancelled or self.banco.cancel_requested:
                         break
 
-                    # 6. MOVEUP ──────────────────────────────────────────────
-                    await self._status(f"Pos {position}: Moving UP…")
-                    await self._log("MOVEUP")
-                    ok = await self.banco.send_command("MOVEUP")
-                    self.banco.motor_is_down = False
+                    # 6. MOVEOUTHOME ──────────────────────────────────────────────
+                    await self._status(f"Pos {position}: Moving OUT…")
+                    await self._log("MOVEOUTHOME")
+                    ok = await self.banco.send_command("MOVEOUTHOME")
+                    self.banco.motor_is_in = False
                     if not ok or self.banco.cancel_requested:
                         break
                     await asyncio.sleep(0.1)
@@ -348,27 +348,24 @@ class IntegratedExperimentController:
                 if self.banco.cancel_requested:
                     break
 
-                rotations_home = len(enabled_positions) - 1
-                if rotations_home > 0:
-                    await self._log(f"Returning to home position ({rotations_home} rotations)…")
-                    await self._status(f"Cycle {cycle}: Returning home…")
-                    for i in range(rotations_home):
-                        ok = await self.banco.send_command("MOVECOUNTERCLOCKWISE")
-                        if not ok:
-                            await self._log("✗ Failed to return home")
-                            break
-                        await asyncio.sleep(0.5)
+                await self._status(f"Cycle {cycle}/{cycles}: Returning home…")
+                await self._log("ROTATIONALHOMING")
+                ok = await self.banco.send_command("ROTATIONALHOMING")
+                if not ok or self.banco.cancel_requested:
+                    await self._log("⚠ ROTATIONALHOMING failed — Experiment Cancelled.")
+                    await self._status("Rotational homing failed, experiment cancelled.")
+                    break
 
             # ── Finished or cancelled ─────────────────────────────────────────
             if self.banco.cancel_requested:
                 await self._log("=" * 60)
                 await self._log("EXPERIMENT CANCELLED")
                 await self._ensure_fan_off("experiment cancellation")
-                if self.banco.motor_is_down:
-                    await self._log("Motor is DOWN — moving UP for safety…")
-                    await self._status("Cancelling: Moving UP for safety…")
-                    await self.banco.send_command("MOVEUP")
-                    self.banco.motor_is_down = False
+                if self.banco.motor_is_in:
+                    await self._log("Motor is IN — moving OUT for safety…")
+                    await self._status("Cancelling: Moving OUT for safety…")
+                    await self.banco.send_command("MOVEOUTHOME")
+                    self.banco.motor_is_in = False
                 await self._log("=" * 60)
                 await self._status("Experiment cancelled")
                 await self._emit("experiment_complete", cancelled=True,
@@ -384,10 +381,10 @@ class IntegratedExperimentController:
         except asyncio.CancelledError:
             await self._log("Experiment task cancelled externally")
             await self._ensure_fan_off("task cancellation")
-            if self.banco.motor_is_down:
-                await self._log("Moving motor UP for safety…")
-                await self.banco.send_command("MOVEUP")
-                self.banco.motor_is_down = False
+            if self.banco.motor_is_in:
+                await self._log("Moving motor OUT for safety…")
+                await self.banco.send_command("MOVEOUTHOME")
+                self.banco.motor_is_in = False
             await self._status("Experiment cancelled")
             await self._emit("experiment_complete", cancelled=True,
                              message="Experiment cancelled")
@@ -413,14 +410,6 @@ class IntegratedExperimentController:
             self.current_phase_description = ""
             self.current_phase_total      = 0
             self.current_phase_remaining  = 0
-            self.position_check_pending = False
-            self.position_check_response = ""
-            self.position_check_position = 0
-            self.position_check_sample = ""
-            self.position_check_cycle = 0
-            self.position_check_cycles_total = 0
-            self._position_check_action = ""
-            self._position_check_event.clear()
             await self._emit("elapsed_time", seconds=0)
 
     async def _run_manual(
@@ -517,62 +506,6 @@ class IntegratedExperimentController:
             self.experiment_running = False
             self.experiment_mode = ""
             self.banco.cancel_requested = False
-
-    async def _wait_for_position_ok(self, position: int, sample_label: str, cycle: int, cycles_total: int) -> bool:
-        """
-        Send GETPOSITION and block experiment progress until ESP32 replies OK.
-        On non-OK, wait for operator Continue/Cancel.
-        """
-        while not self.banco.cancel_requested:
-            await self._status(f"Pos {position}: Checking sample position…")
-            response = await self.banco.send_command_raw("GETPOSITION")
-            if response == "OK":
-                if self.position_check_pending:
-                    self.position_check_pending = False
-                    await self._emit("position_check_cleared")
-                await self._log(f"✓ GETPOSITION OK at position {position}")
-                return True
-
-            self.position_check_pending = True
-            self.position_check_response = response
-            self.position_check_position = position
-            self.position_check_sample = sample_label
-            self.position_check_cycle = cycle
-            self.position_check_cycles_total = cycles_total
-
-            await self._log(
-                f"⚠ GETPOSITION failed before MOVEDOWN (position {position}): {response}. Awaiting operator action."
-            )
-            await self._status(
-                f"Pos {position}: Position mismatch. Place sample correctly and choose Continue/Cancel."
-            )
-            await self._emit(
-                "position_check_required",
-                position=position,
-                sample_name=sample_label,
-                cycle=cycle,
-                cycles_total=cycles_total,
-                response=response,
-                message="Verifica la posicion de la muestra antes de continuar.",
-            )
-
-            self._position_check_action = ""
-            self._position_check_event.clear()
-
-            while not self.banco.cancel_requested:
-                await self._position_check_event.wait()
-                action = self._position_check_action
-                self._position_check_action = ""
-                self._position_check_event.clear()
-                if action == "continue":
-                    await self._emit("position_check_cleared")
-                    break
-                # "cancel" is handled via cancel_experiment(), which flips cancel_requested
-
-            if self.banco.cancel_requested:
-                return False
-
-        return False
 
     # ── Countdown helper ──────────────────────────────────────────────────────
 

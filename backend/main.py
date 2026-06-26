@@ -284,12 +284,6 @@ async def websocket_endpoint(ws: WebSocket):
                     "current_phase_description": experiment_ctrl.current_phase_description,
                     "current_phase_total":        experiment_ctrl.current_phase_total,
                     "current_phase_remaining":    experiment_ctrl.current_phase_remaining,
-                    "position_check_pending":     experiment_ctrl.position_check_pending,
-                    "position_check_response":    experiment_ctrl.position_check_response,
-                    "position_check_position":    experiment_ctrl.position_check_position,
-                    "position_check_sample":      experiment_ctrl.position_check_sample,
-                    "position_check_cycle":       experiment_ctrl.position_check_cycle,
-                    "position_check_cycles_total": experiment_ctrl.position_check_cycles_total,
                 } if (experiment_ctrl and experiment_ctrl.experiment_running) else None,
             }})
 
@@ -374,7 +368,7 @@ async def _handle_message(data: dict, ws: WebSocket):
             # Persist updated settings
             app_state.positions = [
                 {"enabled": (i + 1) in enabled_positions, "name": sample_names[i] if i < len(sample_names) else ""}
-                for i in range(5)
+                for i in range(12)
             ]
             app_state.desorption_time = desorption_time
             app_state.pre_conditioning_time = pre_conditioning_time
@@ -414,9 +408,6 @@ async def _handle_message(data: dict, ws: WebSocket):
 
         elif msg_type == "cancel_experiment":
             await experiment_ctrl.cancel_experiment()
-
-        elif msg_type == "position_check_action":
-            await experiment_ctrl.set_position_check_action(data.get("action", ""))
 
         # ── Config save ─────────────────────────────────────────────────────
 

@@ -2,7 +2,8 @@
 Application State Management
 Single source of truth for all persisted settings:
     - TOMV3: serial port, sweep type, experiment params
-  - Banco de Ensayo: hostname, positions (1-5), desorption_time, pre_conditioning_time, cycles
+    - Banco de Ensayo: hostname, positions (1-12), desorption_time, pre_conditioning_time, cycles
+        - Banco de Ensayo: hostname, positions (1-12), desorption_time, pre_conditioning_time, cycles
 """
 
 import json
@@ -25,7 +26,26 @@ def _default_positions() -> List[Dict]:
         {"enabled": False, "name": ""},
         {"enabled": False, "name": ""},
         {"enabled": False, "name": ""},
+        {"enabled": False, "name": ""},
+        {"enabled": False, "name": ""},
+        {"enabled": False, "name": ""},
+        {"enabled": False, "name": ""},
+        {"enabled": False, "name": ""},
+        {"enabled": False, "name": ""},
+        {"enabled": False, "name": ""},
     ]
+
+
+def _normalize_positions(raw_positions: List[Dict]) -> List[Dict]:
+    defaults = _default_positions()
+    normalized = []
+    for i in range(12):
+        item = raw_positions[i] if i < len(raw_positions) and isinstance(raw_positions[i], dict) else {}
+        normalized.append({
+            "enabled": bool(item.get("enabled", defaults[i]["enabled"])),
+            "name": str(item.get("name", defaults[i]["name"]) or ""),
+        })
+    return normalized
 
 
 def _default_experiment_params() -> Dict:
@@ -90,7 +110,7 @@ async def load_state() -> AppState:
                 serial_port=d.get("serial_port"),
                 sweep_type=d.get("sweep_type", "TR"),
                 experiment_params=d.get("experiment_params") or _default_experiment_params(),
-                positions=d.get("positions") or _default_positions(),
+                positions=_normalize_positions(d.get("positions") or _default_positions()),
                 desorption_time=float(d.get("desorption_time", 60.0)),
                 pre_conditioning_time=float(d.get("pre_conditioning_time", 300.0)),
                 cycles=int(d.get("cycles", 1)),
