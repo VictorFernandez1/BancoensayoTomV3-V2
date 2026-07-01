@@ -1,12 +1,12 @@
 {
-  "serial_port": "COM16",
+  "serial_port": "COM17",
   "sweep_type": "TR",
   "experiment_params": {
     "TMin": 200,
     "TMax": 400,
     "VMin": 0.5,
     "VMax": 1.5,
-    "Steps": 2,
+    "Steps": 21,
     "Cycles": 2
   },
   "positions": [
@@ -59,8 +59,8 @@
       "name": ""
     }
   ],
-  "desorption_time": 10.0,
-  "pre_conditioning_time": 10.0,
+  "desorption_time": 5.0,
+  "pre_conditioning_time": 5.0,
   "cycles": 2,
   "ble_address": "1C:DB:D4:3C:80:EA"
 }

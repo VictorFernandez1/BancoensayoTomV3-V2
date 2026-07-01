@@ -201,7 +201,7 @@ class IntegratedExperimentController:
                 raise asyncio.CancelledError()
             else:
                 await self._log("✓ MOVEOUTHOME completed successfully.")
-                await self._status("Initial moveouthome completed.")
+                #await self._status("Initial moveouthome completed.")
 
             # Inital rotational homing to ensure starting position is known
             await self._status("Initial rotational homing…")

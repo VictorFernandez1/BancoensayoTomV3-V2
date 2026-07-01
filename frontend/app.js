@@ -14,6 +14,7 @@ let isSerialConnected  = false;
 let isESPconnected      = false;
 let isExperimentRunning = false;
 let isManualExperimentRunning = false;
+let _integratedStartPending = false;
 let applyingConfig          = false;   // suppress cascade during bulk-apply
 let _intentionalEspDisconnect = false;  // distinguish user-initiated from unexpected
 let _positionCheckModalId = null;
@@ -204,6 +205,7 @@ function handleMessage(msg) {
             break;
 
         case 'experiment_complete':
+            _integratedStartPending = false;
             closePositionCheckModal();
             handleExperimentComplete(msg);
             break;
@@ -279,6 +281,7 @@ function handleMessage(msg) {
             break;
 
         case 'error':
+            _integratedStartPending = false;
             appendLog(`ERROR: ${msg.message}`, 'error');
             showAlert(msg.message, 'danger');
             break;
@@ -336,11 +339,13 @@ function syncState(state) {
             setEspStatus('Conectado', true);
         }
         if (state.experiment_running && state.experiment_mode === 'manual') {
+            _integratedStartPending = false;
             setExperimentRunning(false);
             setManualExperimentRunning(true);
         }
 
         if (state.experiment_running && state.experiment_mode !== 'manual') {
+            _integratedStartPending = false;
             setManualExperimentRunning(false);
             setExperimentRunning(true);
             // Restore mid-experiment displays for reconnecting clients
@@ -374,7 +379,8 @@ function syncState(state) {
             }
         }
 
-        if (!state.experiment_running) {
+        if (!state.experiment_running && !(_integratedStartPending && isExperimentRunning)) {
+            _integratedStartPending = false;
             setManualExperimentRunning(false);
             setExperimentRunning(false);
         }
@@ -699,6 +705,7 @@ function startExperiment() {
 
     const sampleNames = sampleNameInputs.map(inp => inp.value.trim());
 
+    _integratedStartPending = true;
     setExperimentRunning(true);
     send({
         type:                  'start_experiment',
@@ -771,6 +778,7 @@ function setExperimentRunning(running) {
         document.getElementById('timer-container').style.display = 'none';
         stopGlobalTimer();
         if (manualBtn) manualBtn.disabled = false;
+        _integratedStartPending = false;
     }
 }
 
