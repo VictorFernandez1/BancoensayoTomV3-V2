@@ -19,17 +19,17 @@ echo Activating virtual environment...
 call integratedvenv\Scripts\activate.bat
 
 REM ── Release port 8000 if still bound from a previous run ─────────────────
-echo Releasing port 8011...
-for /f "tokens=5" %%a in ('%SystemRoot%\System32\netstat.exe -aon ^| findstr :8006 2^>nul') do (
+echo Releasing port 8012...
+for /f "tokens=5" %%a in ('%SystemRoot%\System32\netstat.exe -aon ^| findstr :8012 2^>nul') do (
     %SystemRoot%\System32\taskkill.exe /F /PID %%a >nul 2>&1
 )
 
 REM ── Start server ─────────────────────────────────────────────────────────
 echo.
-echo Starting server at http://localhost:8011
+echo Starting server at http://localhost:8013
 echo Press Ctrl+C to stop.
 echo.
 cd backend
-python -m uvicorn main:app --host 0.0.0.0 --port 8011
+python -m uvicorn main:app --host 0.0.0.0 --port 8013
 
 pause

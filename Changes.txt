@@ -1,15 +1,8 @@
 
--2 Quitar el botón de enviar parámetros.
-
--4 El boton de iniciar experimento manual se queda deshabilitado a veces.
--5 Algo raro pasa con la barra de progreso total del experimento.
-
--9 Mejorar spec file
--8 Si cancelas cuando se está el moviendo el motor, este no vuelve a posición segura.
 
 
--1 Los botones de desconectar esp32 y desconectar veggienose se deshabilitan mientras dure el experimento.
--4 Easter Egg.
+
+
 
 
 

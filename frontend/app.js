@@ -1097,28 +1097,38 @@ function closePositionCheckModal() {
 function handleExperimentComplete(msg) {
     setExperimentRunning(false);
     const cancelled = msg.cancelled || false;
+    const error = msg.error || '';
 
-    if (!cancelled) {
+    if (error) {
+        playNotificationTone('error');
+    } else if (!cancelled) {
         playNotificationTone('success');
     }
 
     appendLog(
-        cancelled ? '⚠ EXPERIMENTO CANCELADO' : '✓ EXPERIMENTO COMPLETADO',
-        cancelled ? 'error' : 'success'
+        error ? `⚠ ERROR: ${error}`
+              : cancelled ? '⚠ EXPERIMENTO CANCELADO'
+                          : '✓ EXPERIMENTO COMPLETADO',
+        error || cancelled ? 'error' : 'success'
     );
 
     showModal(
-        cancelled ? 'bg-warning text-dark' : 'bg-success text-white',
-        cancelled ? '<i class="bi bi-exclamation-triangle-fill"></i> Experimento Cancelado'
-                  : '<i class="bi bi-check-circle-fill"></i> Experimento Completado',
-        cancelled ? '<p>El experimento fue cancelado. El motor ha vuelto a la posición segura.</p>'
-                  : '<p class="lead">¡Experimento finalizado correctamente!</p><p>Los CSV se han descargado a tu dispositivo.</p>'
+        error ? 'bg-danger text-white'
+              : cancelled ? 'bg-warning text-dark'
+                          : 'bg-success text-white',
+        error ? '<i class="bi bi-exclamation-triangle-fill"></i> Error en Experimento'
+              : cancelled ? '<i class="bi bi-exclamation-triangle-fill"></i> Experimento Cancelado'
+                          : '<i class="bi bi-check-circle-fill"></i> Experimento Completado',
+        error ? `<p><strong>Error del motor:</strong></p><p>${error}</p><p>El experimento se detuvo. Revisa el ESP32 y la conexión antes de reiniciar.</p>`
+              : cancelled ? '<p>El experimento fue cancelado. El motor ha vuelto a la posición segura.</p>'
+                          : '<p class="lead">¡Experimento finalizado correctamente!</p><p>Los CSV se han descargado a tu dispositivo.</p>'
     );
 
     // Browser notification when page hidden
-    if ('Notification' in window && document.hidden && !cancelled) {
+    if ('Notification' in window && document.hidden && (!cancelled || error)) {
+        const body = error ? 'Error de motor en el experimento' : 'Experimento completado';
         if (Notification.permission === 'granted') {
-            new Notification('TOMV3 + Banco', { body: 'Experimento completado' });
+            new Notification('TOMV3 + Banco', { body });
         } else if (Notification.permission !== 'denied') {
             Notification.requestPermission();
         }

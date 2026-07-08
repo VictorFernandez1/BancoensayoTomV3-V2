@@ -103,6 +103,28 @@ class BleController:
         self._log_sync(f"✗ Fan OFF failed: {result}")
         return False
 
+    async def stop(self):
+        """Emergency STOP — immediately halt any motor movement."""
+        cf = asyncio.run_coroutine_threadsafe(self._ble_stop(), self._ble_loop)
+        await asyncio.wrap_future(cf)
+
+    async def _ble_stop(self):
+        """Write STOP directly to the GATT char, bypassing _pending_future to
+        avoid a race with an in-flight motor command."""
+        if not self.connected or not self._client:
+            self._log_sync("✗ STOP failed: not connected")
+            return False
+        try:
+            self._log_sync("→ STOP (emergency)")
+            await self._client.write_gatt_char(
+                BLE_CMD_CHAR_UUID, b"STOP", response=True,
+            )
+            self._log_sync("✓ STOP acknowledged — motors halted")
+            return True
+        except Exception as e:
+            self._log_sync(f"✗ STOP error: {e}")
+            return False
+
     # ── BLE-loop coroutines (run on self._ble_loop) ───────────────────────────
 
     async def _ble_connect(self, address: Optional[str] = None):

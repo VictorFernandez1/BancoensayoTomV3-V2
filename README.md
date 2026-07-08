@@ -43,7 +43,7 @@ Integrated Experiment Controller orchestrates the full measurement workflow:
 - **Configurable save folder** — defaults to the user's Downloads folder.
 - **Configurable sweep parameters**: temperature range, voltage range, steps, cycles, sweep type (TR, SQ, SWT, SN).
 - **Cascading position checkboxes**: enabling position N automatically enables all prior positions.
-- **Graceful cancellation**: the motor always returns to the safe UP position before stopping.
+- **Two-phase cancellation**: Cancel sends an emergency `STOP` command that immediately halts the physical motor, then the arm always moves to the safe OUT position (`MOVEOUTHOME`).
 - **Persistent configuration**: ALL settings (TOMV3 params, sweep type, Banco params) are saved to `backend/session.json` and restored on next launch — no need to click "Enviar" to persist a value change.
 - **Unexpected disconnect modals**: both TOMV3 serial and ESP32 BLE connections show a prominent modal alert if the connection is lost unexpectedly (user-initiated disconnects do not trigger the alert).
 - **Browser-side sound alerts (Web Audio API)**: audible notifications are generated in the browser device when the experiment-completed popup appears and on critical error popups (serial disconnect, unexpected BLE disconnect, and position-check mismatch popup).
@@ -467,7 +467,7 @@ TOMV3D1_File_20260326_130124_Prueba.csv
 | `disconnect_ble` | — | Disconnect from ESP32 |
 | `start_experiment` | `sample_names[]`, `enabled_positions[]`, `desorption_time`, `cycles` | Start integrated experiment |
 | `start_manual_experiment` | `sample_name`, `pre_conditioning_time` | Start manual experiment (no Banco motors) |
-| `cancel_experiment` | — | Request cancellation |
+| `cancel_experiment` | — | Request cancellation (emergency STOP + safety MOVEOUTHOME) |
 | `save_config` | `config` | Persist Banco de Ensayo settings |
 | `clear_log` | — | Clear communication log |
 
@@ -489,7 +489,7 @@ TOMV3D1_File_20260326_130124_Prueba.csv
 | `timer_start` | `phase`, `total_seconds`, `description` | Countdown phase begins |
 | `timer_update` | `remaining`, `total`, `phase` | Countdown tick |
 | `elapsed_time` | `seconds` | Seconds elapsed in current wait |
-| `experiment_complete` | `cancelled` (bool), `message` | Experiment finished or cancelled |
+| `experiment_complete` | `cancelled` (bool), `error` (str, optional), `message` | Experiment finished, cancelled, or failed with error |
 | `manual_experiment_complete` | `success`, `cancelled`, `sample_name`, `message` | Manual experiment finished |
 | `auto_save_result` | `success`, `filename`, `rows`, `download_url` / `message` | CSV staged on server; client downloads the file |
 | `serial_disconnected` | `message` | Unexpected serial loss |
@@ -503,13 +503,16 @@ TOMV3D1_File_20260326_130124_Prueba.csv
 Commands sent to the ESP32 (`ESP32_STEPPER`) over BLE — written to the Command characteristic (`AA000002-…`):
 
 | Command | Action |
-|---|---|
-| `MOVEDOWN` | Extend linear motor — nose approaches sample |
-| `MOVEUP` | Retract linear motor — nose away from sample |
-| `MOVECLOCKWISE` | Rotate carousel to next position |
-| `MOVECOUNTERCLOCKWISE` | Rotate carousel back one position (return-home loop) |
+|---|---|---|
+| `MOVEINHOME` | Linear motor inward until IN limit switch |
+| `MOVEOUTHOME` | Linear motor outward until OUT limit switch (safe position) |
+| `MOVECLOCKWISE` | Rotate carousel to next optical-sensor position |
+| `MOVECOUNTERCLOCKWISE` | Rotate carousel backward one position |
+| `ROTATIONALHOMING` | Find the carousel home flag via optical sensor |
 | `STOP` | Immediately halt any in-progress movement |
-| `SETINTERVAL:<µs>` | Set the step pulse interval in microseconds (must be > 1000) |
+| `FANON` | Turn desorption fan ON |
+| `FANOFF` | Turn desorption fan OFF |
+| `SETINTERVAL:<µs>` | Set the step pulse interval in microseconds |
 
 The ESP32 responds via notifications on the Status characteristic (`AA000003-…`):
 1. `OK` — command acknowledged, movement starting (ignored by the backend)
@@ -541,7 +544,7 @@ The ESP32 responds via notifications on the Status characteristic (`AA000003-…
 - On Linux, confirm BlueZ is running: `sudo systemctl status bluetooth`.
 
 **Experiment does not cancel immediately**
-- Normal behaviour. The controller waits for the current motor command (`OK` + `COMPLETE`) to finish before checking the cancel flag. The arm will always end in the safe UP position.
+- The cancel sequence is: emergency `STOP` (halts the motor mid-step) → brief settle → async task cancel → safety `MOVEOUTHOME`. This typically completes in under a second.
 
 **Manual experiment start is disabled**
 - This is expected while an integrated experiment is running.

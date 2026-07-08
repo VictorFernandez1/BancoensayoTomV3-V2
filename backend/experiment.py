@@ -63,6 +63,8 @@ class IntegratedExperimentController:
         self.current_phase_total: int       = 0
         self.current_phase_remaining: int   = 0
 
+        self.experiment_error: Optional[str] = None
+
         self.fan_is_on: bool = False
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -83,6 +85,7 @@ class IntegratedExperimentController:
 
         # Reset cancel flag on controller
         self.banco.cancel_requested = False
+        self.experiment_error = None
         self.banco.motor_is_in = False
         self.fan_is_on = False
 
@@ -126,11 +129,29 @@ class IntegratedExperimentController:
         return True
 
     async def cancel_experiment(self):
-        """Request cancellation; motor safety is handled inside the task."""
+        """
+        Cancel the running experiment:
+          1. Emergency STOP — immediately halt any motor movement
+          2. Set cancel flag
+          3. Brief settle delay
+          4. Cancel the async task (runs the safety cleanup)
+        """
         if not self.experiment_running:
             return
         await self._log("Cancel requested…")
+
+        # Step 1: Emergency stop — halts the physical motor immediately
+        await self._log("→ STOP (emergency)")
+        await self.banco.stop()
+
+        # Step 2: Set flag so the task sees it at its next check
         self.banco.cancel_requested = True
+
+        # Step 3: Brief settle (STOPPED notification should arrive by now)
+        await asyncio.sleep(0.3)
+
+        # Step 4: Cancel the async task — the except CancelledError handler
+        #         will move the arm to the safe OUT position.
         if self._task:
             self._task.cancel()
 
@@ -160,8 +181,8 @@ class IntegratedExperimentController:
         acq_duration = (steps + 1) * veggie_cycles * 2 + 30
 
         # Runtime estimate includes motor movements per position and cycle return-home rotations.
-        linear_motor_time = 5.1       # MOVEDOWN / MOVEUP (seconds each)
-        rotational_motor_time = 5.525 # MOVECLOCKWISE / MOVECOUNTERCLOCKWISE (seconds each)
+        linear_motor_time = 18       # MOVEDOWN / MOVEUP (seconds each)
+        rotational_motor_time = 1 # MOVECLOCKWISE / MOVECOUNTERCLOCKWISE (seconds each)
 
         total_positions = len(enabled_positions)
         per_position_seconds = (
@@ -195,10 +216,14 @@ class IntegratedExperimentController:
             await self._log("MOVEOUTHOME")
             ok = await self.banco.send_command("MOVEOUTHOME")
             self.banco.motor_is_in = False
-            if not ok or self.banco.cancel_requested:
-                await self._log("⚠ MOVEOUTHOME failed — Experiment Cancelled.")
-                await self._status("Initial moveouthome failed, experiment cancelled.")
+            if self.banco.cancel_requested:
                 raise asyncio.CancelledError()
+            if not ok:
+                self.experiment_error = "Initial MOVEOUTHOME failed — arm could not move to safe position"
+                await self._log(f"⚠ {self.experiment_error}")
+                await self._status(self.experiment_error)
+                await self._emit("experiment_complete", cancelled=False, error=self.experiment_error, message=self.experiment_error)
+                return
             else:
                 await self._log("✓ MOVEOUTHOME completed successfully.")
                 #await self._status("Initial moveouthome completed.")
@@ -208,10 +233,15 @@ class IntegratedExperimentController:
             await self._log("ROTATIONALHOMING")
             # Send command and wait for confirmation
             ok = await self.banco.send_command("ROTATIONALHOMING")
-            if not ok or self.banco.cancel_requested:
-                await self._log("⚠ ROTATIONALHOMING failed — Experiment Cancelled.")
-                await self._status("Initial rotational homing failed, experiment cancelled.")
+            if self.banco.cancel_requested:
                 raise asyncio.CancelledError()
+            if not ok:
+                self.experiment_error = "Initial ROTATIONALHOMING failed — carousel position unknown"
+                await self._log(f"⚠ {self.experiment_error}")
+                await self._status(self.experiment_error)
+                await self._emit("experiment_complete", cancelled=False, error=self.experiment_error, message=self.experiment_error)
+                return
+
             else:
                 await self._log("✓ ROTATIONALHOMING completed successfully.")
                 #wait self._status("Initial rotational homing completed.")
@@ -278,7 +308,12 @@ class IntegratedExperimentController:
                     await self._status(f"Pos {position}: Moving IN…")
                     await self._log("MOVEINHOME")
                     ok = await self.banco.send_command("MOVEINHOME")
-                    if not ok or self.banco.cancel_requested:
+                    if self.banco.cancel_requested:
+                        break
+                    if not ok:
+                        self.experiment_error = f"MOVEINHOME failed at Position {position} (Cycle {cycle})"
+                        await self._log(f"⚠ {self.experiment_error}")
+                        await self._status(self.experiment_error)
                         break
                     self.banco.motor_is_in = True
                     await asyncio.sleep(0.1)
@@ -308,7 +343,12 @@ class IntegratedExperimentController:
                     await self._log("MOVEOUTHOME")
                     ok = await self.banco.send_command("MOVEOUTHOME")
                     self.banco.motor_is_in = False
-                    if not ok or self.banco.cancel_requested:
+                    if self.banco.cancel_requested:
+                        break
+                    if not ok:
+                        self.experiment_error = f"MOVEOUTHOME failed at Position {position} (Cycle {cycle})"
+                        await self._log(f"⚠ {self.experiment_error}")
+                        await self._status(self.experiment_error)
                         break
                     await asyncio.sleep(0.1)
 
@@ -324,7 +364,13 @@ class IntegratedExperimentController:
                     if not is_last:
                         await self._status(f"Pos {position}: Moving to next position…")
                         ok = await self.banco.send_command("MOVECLOCKWISE")
-                        if not ok or self.banco.cancel_requested:
+                        if self.banco.cancel_requested:
+                            await self._ensure_fan_off("rotation interruption")
+                            break
+                        if not ok:
+                            self.experiment_error = f"MOVECLOCKWISE failed after Position {position} (Cycle {cycle})"
+                            await self._log(f"⚠ {self.experiment_error}")
+                            await self._status(self.experiment_error)
                             await self._ensure_fan_off("rotation interruption")
                             break
                         await asyncio.sleep(0.1)
@@ -345,31 +391,46 @@ class IntegratedExperimentController:
                     await self._save_csv(sample_label)
 
                 # ── Return home after each cycle ─────────────────────────────
-                if self.banco.cancel_requested:
+                if self.banco.cancel_requested or self.experiment_error:
                     break
 
                 await self._status(f"Cycle {cycle}/{cycles}: Returning home…")
                 await self._log("ROTATIONALHOMING")
                 ok = await self.banco.send_command("ROTATIONALHOMING")
-                if not ok or self.banco.cancel_requested:
-                    await self._log("⚠ ROTATIONALHOMING failed — Experiment Cancelled.")
-                    await self._status("Rotational homing failed, experiment cancelled.")
+                if self.banco.cancel_requested:
+                    break
+                if not ok:
+                    self.experiment_error = f"ROTATIONALHOMING failed after Cycle {cycle} — carousel position unknown"
+                    await self._log(f"⚠ {self.experiment_error}")
+                    await self._status(self.experiment_error)
                     break
 
-            # ── Finished or cancelled ─────────────────────────────────────────
+            # ── Finished, error, or cancelled ─────────────────────────────────
             if self.banco.cancel_requested:
                 await self._log("=" * 60)
                 await self._log("EXPERIMENT CANCELLED")
                 await self._ensure_fan_off("experiment cancellation")
-                if self.banco.motor_is_in:
-                    await self._log("Motor is IN — moving OUT for safety…")
-                    await self._status("Cancelling: Moving OUT for safety…")
-                    await self.banco.send_command("MOVEOUTHOME")
-                    self.banco.motor_is_in = False
+                await self._log("Moving motor OUT for safety…")
+                await self._status("Cancelling: Moving OUT for safety…")
+                await self.banco.send_command("MOVEOUTHOME")
+                self.banco.motor_is_in = False
                 await self._log("=" * 60)
                 await self._status("Experiment cancelled")
                 await self._emit("experiment_complete", cancelled=True,
                                  message="Experiment cancelled")
+            elif self.experiment_error:
+                await self._log("=" * 60)
+                await self._log("EXPERIMENT FINISHED WITH ERROR")
+                await self._ensure_fan_off("experiment error")
+                await self._log("Moving motor OUT for safety…")
+                await self._status("Error: Moving OUT for safety…")
+                await self.banco.send_command("MOVEOUTHOME")
+                self.banco.motor_is_in = False
+                await self._log("=" * 60)
+                await self._status(f"Error: {self.experiment_error}")
+                await self._emit("experiment_complete", cancelled=False,
+                                 error=self.experiment_error,
+                                 message=self.experiment_error)
             else:
                 await self._log("=" * 60)
                 await self._log("EXPERIMENT COMPLETED SUCCESSFULLY")
@@ -381,10 +442,9 @@ class IntegratedExperimentController:
         except asyncio.CancelledError:
             await self._log("Experiment task cancelled externally")
             await self._ensure_fan_off("task cancellation")
-            if self.banco.motor_is_in:
-                await self._log("Moving motor OUT for safety…")
-                await self.banco.send_command("MOVEOUTHOME")
-                self.banco.motor_is_in = False
+            await self._log("Moving motor OUT for safety…")
+            await self.banco.send_command("MOVEOUTHOME")
+            self.banco.motor_is_in = False
             await self._status("Experiment cancelled")
             await self._emit("experiment_complete", cancelled=True,
                              message="Experiment cancelled")
@@ -399,6 +459,7 @@ class IntegratedExperimentController:
             self.experiment_running = False
             self.experiment_mode = ""
             self.banco.cancel_requested = False
+            self.experiment_error = None
             self.current_position = 0
             self.current_cycle    = 0
             self.cycles_total     = 0
