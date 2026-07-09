@@ -74,6 +74,7 @@ class IntegratedExperimentController:
         sample_names: List[str],
         enabled_positions: List[int],
         desorption_time: float,
+        cycle_gap_time: float,
         cycles: int,
         pre_conditioning_time: float,
         experiment_params: Dict,
@@ -96,6 +97,7 @@ class IntegratedExperimentController:
                 sample_names,
                 enabled_positions,
                 desorption_time,
+                cycle_gap_time,
                 cycles,
                 pre_conditioning_time,
                 experiment_params,
@@ -162,6 +164,7 @@ class IntegratedExperimentController:
         sample_names: List[str],
         enabled_positions: List[int],
         desorption_time: float,
+        cycle_gap_time: float,
         cycles: int,
         pre_conditioning_time: float,
         experiment_params: Dict,
@@ -189,8 +192,9 @@ class IntegratedExperimentController:
             pre_conditioning_time + acq_duration + desorption_time + (2 * linear_motor_time)
         )
         per_cycle_rotation_seconds = (total_positions - 1) * 2 * rotational_motor_time
+        cycle_gap_total = max(0, (cycles - 1)) * cycle_gap_time
         total_experiment_seconds = math.ceil(
-            desorption_time + cycles * ((total_positions * per_position_seconds) + per_cycle_rotation_seconds)
+            desorption_time + cycles * ((total_positions * per_position_seconds) + per_cycle_rotation_seconds) + cycle_gap_total
         )
 
         # Persist for reconnecting clients
@@ -206,6 +210,8 @@ class IntegratedExperimentController:
         await self._log("=" * 60)
         await self._log("INTEGRATED EXPERIMENT STARTED")
         await self._log(f"Positions: {enabled_positions}  |  Cycles: {cycles}")
+        if cycle_gap_time > 0:
+            await self._log(f"Cycle gap: {cycle_gap_time}s")
         await self._log(f"Pre-cond: {pre_conditioning_time}s  |  Desorption: {desorption_time}s  |  Acquisition: {acq_duration}s")
         await self._log(f"Staging folder: {self.exports_dir}")
         await self._log("=" * 60)
@@ -404,6 +410,17 @@ class IntegratedExperimentController:
                     await self._log(f"⚠ {self.experiment_error}")
                     await self._status(self.experiment_error)
                     break
+
+                # ── Cycle gap countdown (delay between cycles) ────────────────
+                if cycle < cycles and cycle_gap_time > 0:
+                    await self._status(f"Cycle {cycle}/{cycles}: Cycle gap ({cycle_gap_time}s)…")
+                    cancelled = await self._countdown(
+                        "cycle_gap",
+                        int(cycle_gap_time),
+                        f"Cycle gap — after Cycle {cycle} ({cycle_gap_time}s)",
+                    )
+                    if cancelled or self.banco.cancel_requested:
+                        break
 
             # ── Finished, error, or cancelled ─────────────────────────────────
             if self.banco.cancel_requested:

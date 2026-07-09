@@ -123,9 +123,6 @@ class SerialHandler:
     # ── Data parsing ─────────────────────────────────────────────────────────
 
     async def _parse_data(self, line: str):
-        log_msg = f"Recibido: {line[:50]}..." if len(line) > 50 else f"Recibido: {line}"
-        await self._log(log_msg)
-
         values = line.split("_")
         if len(values) == 47:
             current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]

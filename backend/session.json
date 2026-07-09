@@ -19,48 +19,49 @@
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     }
   ],
   "desorption_time": 5.0,
   "pre_conditioning_time": 5.0,
+  "cycle_gap_time": 30.0,
   "cycles": 2,
   "ble_address": "1C:DB:D4:3C:80:EA"
 }

@@ -62,6 +62,7 @@ class AppState:
     positions: List[Dict] = field(default_factory=_default_positions)
     desorption_time: float = 60.0
     pre_conditioning_time: float = 300.0
+    cycle_gap_time: float = 0.0
     cycles: int = 1
     ble_address: str = ""
 
@@ -76,6 +77,7 @@ async def save_state(state: AppState):
             "positions":             state.positions,
             "desorption_time":       state.desorption_time,
             "pre_conditioning_time": state.pre_conditioning_time,
+            "cycle_gap_time":        state.cycle_gap_time,
             "cycles":                state.cycles,
             "ble_address":           state.ble_address,
         }
@@ -103,6 +105,7 @@ async def load_state() -> AppState:
                 positions=_normalize_positions(d.get("positions") or _default_positions()),
                 desorption_time=float(d.get("desorption_time", 60.0)),
                 pre_conditioning_time=float(d.get("pre_conditioning_time", 300.0)),
+                cycle_gap_time=float(d.get("cycle_gap_time", 0.0)),
                 cycles=int(d.get("cycles", 1)),
                 ble_address=str(d.get("ble_address", "") or "").strip(),
             )

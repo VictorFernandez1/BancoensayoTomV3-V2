@@ -161,6 +161,7 @@ async def get_state():
         "positions":        app_state.positions,
         "desorption_time":  app_state.desorption_time,
         "pre_conditioning_time": app_state.pre_conditioning_time,
+        "cycle_gap_time":   app_state.cycle_gap_time,
         "cycles":           app_state.cycles,
         "data_points":      len(serial_handler.timestamps) if serial_handler else 0,
     }
@@ -259,8 +260,9 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json({"type": "connected", "message": "Connected to server"})
         if app_state:
             await ws.send_json({"type": "state_sync", "state": {
-                "max_positions":     MAX_POSITIONS,
-                "serial_connected":  serial_handler.is_connected if serial_handler else False,
+                "max_positions":        MAX_POSITIONS,
+                "cycle_gap_time":       app_state.cycle_gap_time,
+                "serial_connected":     serial_handler.is_connected if serial_handler else False,
                 "serial_device_id":  serial_handler.current_device_id if serial_handler else "",
                 "serial_port":       app_state.serial_port,
                 "experiment_params": app_state.experiment_params,
@@ -364,6 +366,7 @@ async def _handle_message(data: dict, ws: WebSocket):
             enabled_positions = [int(p) for p in data.get("enabled_positions", [1])]
             desorption_time       = float(data.get("desorption_time", app_state.desorption_time))
             pre_conditioning_time = float(data.get("pre_conditioning_time", app_state.pre_conditioning_time))
+            cycle_gap_time        = float(data.get("cycle_gap_time", app_state.cycle_gap_time))
             cycles                = int(data.get("cycles", app_state.cycles))
 
             # Persist updated settings
@@ -373,6 +376,7 @@ async def _handle_message(data: dict, ws: WebSocket):
             ]
             app_state.desorption_time = desorption_time
             app_state.pre_conditioning_time = pre_conditioning_time
+            app_state.cycle_gap_time = cycle_gap_time
             app_state.cycles = cycles
             await save_state(app_state)
 
@@ -380,6 +384,7 @@ async def _handle_message(data: dict, ws: WebSocket):
                 sample_names=sample_names,
                 enabled_positions=enabled_positions,
                 desorption_time=desorption_time,
+                cycle_gap_time=cycle_gap_time,
                 cycles=cycles,
                 pre_conditioning_time=pre_conditioning_time,
                 experiment_params=app_state.experiment_params,
@@ -416,6 +421,7 @@ async def _handle_message(data: dict, ws: WebSocket):
             cfg = data.get("config", {})
             if "desorption_time"       in cfg: app_state.desorption_time       = float(cfg["desorption_time"])
             if "pre_conditioning_time" in cfg: app_state.pre_conditioning_time = float(cfg["pre_conditioning_time"])
+            if "cycle_gap_time"        in cfg: app_state.cycle_gap_time        = float(cfg["cycle_gap_time"])
             if "cycles"                in cfg: app_state.cycles                = int(cfg["cycles"])
             if "positions"             in cfg: app_state.positions             = cfg["positions"]
             if "experiment_params"     in cfg: app_state.experiment_params     = cfg["experiment_params"]

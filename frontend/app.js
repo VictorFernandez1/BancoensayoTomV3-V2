@@ -329,6 +329,7 @@ function syncState(state) {
         // Banco params
         if (state.desorption_time !== undefined) setVal('desorptionTime', state.desorption_time);
         if (state.pre_conditioning_time !== undefined) setVal('preCondTime', state.pre_conditioning_time);
+        if (state.cycle_gap_time !== undefined)  setVal('cycleGapTime', state.cycle_gap_time);
         if (state.cycles !== undefined)          setVal('experimentCycles', state.cycles);
         if (state.ble_address !== undefined)     setVal('ble-address', state.ble_address);
 
@@ -421,6 +422,7 @@ function setupEventListeners() {
     document.getElementById('desorptionTime').addEventListener('input', updateAcqHint);
     document.getElementById('experimentCycles').addEventListener('input', updateAcqHint);
     document.getElementById('preCondTime').addEventListener('input', updateAcqHint);
+    document.getElementById('cycleGapTime').addEventListener('input', updateAcqHint);
 
     // TOMV3 params → auto-save on change (persist without needing Enviar)
     ['param-tmin', 'param-tmax', 'param-vmin', 'param-vmax', 'param-steps', 'param-cycles'].forEach(id => {
@@ -454,7 +456,7 @@ function setupEventListeners() {
     document.getElementById('connectEspBtn').addEventListener('click', toggleEspConnection);
 
     // Banco params → auto-save
-    ['desorptionTime', 'experimentCycles', 'preCondTime'].forEach(id => {
+    ['desorptionTime', 'experimentCycles', 'preCondTime', 'cycleGapTime'].forEach(id => {
         document.getElementById(id).addEventListener('input', scheduleAutoSave);
     });
     const bleAddressInput = document.getElementById('ble-address');
@@ -718,6 +720,7 @@ function startExperiment() {
         sample_names:          sampleNames,
         enabled_positions:     enabledPositions,
         desorption_time:       desorptionTime,
+        cycle_gap_time:        parseFloat(document.getElementById('cycleGapTime').value) || 0,
         cycles:                cycles,
         pre_conditioning_time: parseFloat(document.getElementById('preCondTime').value) || 300,
     });
@@ -1285,6 +1288,7 @@ function scheduleAutoSave() {
             config: {
                 desorption_time:       parseFloat(document.getElementById('desorptionTime').value) || 60,
                 pre_conditioning_time: parseFloat(document.getElementById('preCondTime').value) || 300,
+                cycle_gap_time:        parseFloat(document.getElementById('cycleGapTime').value) || 0,
                 cycles:                parseInt(document.getElementById('experimentCycles').value, 10) || 1,
                 positions:             checkboxes.map((cb, i) => ({
                     enabled: cb.checked,
@@ -1331,10 +1335,12 @@ function updateAcqHint() {
 
     const desorption = parseFloat(document.getElementById('desorptionTime').value) || 60;
     const expCycles  = parseInt(document.getElementById('experimentCycles').value) || 1;
+    const cycleGap   = parseFloat(document.getElementById('cycleGapTime').value) || 0;
     const nEnabled   = checkboxes.filter(cb => cb.checked).length || 1;
     const perPositionSeconds = preCond + acq + desorption + (2 * linearMotorTime);
     const perCycleRotationSeconds = (nEnabled - 1) * 2 * rotationalMotorTime;
-    const totalExp = Math.ceil(expCycles * ((nEnabled * perPositionSeconds) + perCycleRotationSeconds));
+    const cycleGapTotal = Math.max(0, (expCycles - 1)) * cycleGap;
+    const totalExp = Math.ceil(expCycles * ((nEnabled * perPositionSeconds) + perCycleRotationSeconds) + cycleGapTotal);
     const totalMin   = Math.ceil(totalExp / 60);
 
     const perPosHint = `${acq} s (barrido)  →  total ~${Math.ceil(perPositionSeconds)} s por posición (incluye motores)`;

@@ -43,6 +43,7 @@ Integrated Experiment Controller orchestrates the full measurement workflow:
 - **Configurable save folder** — defaults to the user's Downloads folder.
 - **Configurable sweep parameters**: temperature range, voltage range, steps, cycles, sweep type (TR, SQ, SWT, SN).
 - **12 configurable sample positions** (up/down via `MAX_POSITIONS` in `state.py`): **Cascading position checkboxes** — enabling position N automatically enables all prior positions.
+- **Configurable cycle gap time** (`cycle_gap_time`, default 0 s): adds a delay between experiment cycles after the carousel returns home, with a countdown shown in the UI.
 - **Two-phase cancellation**: Cancel sends an emergency `STOP` command that immediately halts the physical motor, then the arm always moves to the safe OUT position (`MOVEOUTHOME`).
 - **Persistent configuration**: ALL settings (TOMV3 params, sweep type, Banco params) are saved to `backend/session.json` and restored on next launch — no need to click "Enviar" to persist a value change.
 - **Unexpected disconnect modals**: both TOMV3 serial and ESP32 BLE connections show a prominent modal alert if the connection is lost unexpectedly (user-initiated disconnects do not trigger the alert).
@@ -341,6 +342,7 @@ Each plot keeps the last 100 data points.
 | Tiempo de desorción (s) | 60 | Wait time between positions for odour recovery |
 | Tiempo de preacondicionamiento (s) | 300 | Stabilisation wait after MOVEDOWN, before the sweep starts |
 | Ciclos | 1 | Number of full carousel repetitions |
+| Tiempo entre ciclos (s) | 0 | Delay between cycles after rotational homing (countdown shown in UI) |
 | Carpeta de destino | Descargas del navegador | Click **Seleccionar carpeta** once to choose a folder on the client device. All auto-saves during the experiment write silently to that folder. If no folder is selected, each CSV is downloaded to the browser’s default Downloads folder. The folder picker uses the File System Access API (Chrome/Edge); Firefox falls back to standard downloads. |
 
 **Control de Experimento Integrado**
@@ -379,6 +381,7 @@ For each cycle (1 … Ciclos):
 
   After all positions:
     12. ROTATIONALHOMING   — return home
+    13. Cycle gap (if not last cycle) — configurable delay between cycles (0 s = skip)
 
 Repeat for remaining cycles.
 ```
@@ -405,13 +408,14 @@ rotational_motor_time     = 5.525   # MOVECLOCKWISE / MOVECOUNTERCLOCKWISE (seco
 
 per_position_seconds      = pre_conditioning_time + acq_duration + desorption_time + 2 × linear_motor_time
 per_cycle_rotation_time   = (N_positions − 1) × 2 × rotational_motor_time
+cycle_gap_total           = max(0, Cycles − 1) × cycle_gap_time
 
-total_experiment          = ceil(Cycles × (N_positions × per_position_seconds + per_cycle_rotation_time))
+total_experiment          = ceil(Cycles × (N_positions × per_position_seconds + per_cycle_rotation_time) + cycle_gap_total)
 ```
 
 With one-time initial desorption included:
 ```
-total_experiment          = ceil(desorption_time + Cycles × (N_positions × per_position_seconds + per_cycle_rotation_time))
+total_experiment          = ceil(desorption_time + Cycles × (N_positions × per_position_seconds + per_cycle_rotation_time) + cycle_gap_total)
 ```
 
 Notes:
@@ -466,7 +470,7 @@ TOMV3D1_File_20260326_130124_Prueba.csv
 | `sweep_type` | `mode` | Set waveform type |
 | `connect_ble` | — | Scan and connect to ESP32_STEPPER via BLE |
 | `disconnect_ble` | — | Disconnect from ESP32 |
-| `start_experiment` | `sample_names[]`, `enabled_positions[]`, `desorption_time`, `cycles` | Start integrated experiment |
+| `start_experiment` | `sample_names[]`, `enabled_positions[]`, `desorption_time`, `cycle_gap_time`, `cycles` | Start integrated experiment |
 | `start_manual_experiment` | `sample_name`, `pre_conditioning_time` | Start manual experiment (no Banco motors) |
 | `cancel_experiment` | — | Request cancellation (emergency STOP + safety MOVEOUTHOME) |
 | `save_config` | `config` | Persist Banco de Ensayo settings |
