@@ -2,8 +2,7 @@
 Application State Management
 Single source of truth for all persisted settings:
     - TOMV3: serial port, sweep type, experiment params
-    - Banco de Ensayo: hostname, positions (1-12), desorption_time, pre_conditioning_time, cycles
-        - Banco de Ensayo: hostname, positions (1-12), desorption_time, pre_conditioning_time, cycles
+    - Banco de Ensayo: hostname, positions, desorption_time, pre_conditioning_time, cycles
 """
 
 import json
@@ -18,28 +17,19 @@ import aiofiles
 
 STATE_FILE = Path(__file__).parent / "session.json"
 
+# Single source of truth for the number of sample positions.
+# Change this value to add or remove positions in the UI.
+MAX_POSITIONS = 12
+
 
 def _default_positions() -> List[Dict]:
-    return [
-        {"enabled": True,  "name": ""},
-        {"enabled": False, "name": ""},
-        {"enabled": False, "name": ""},
-        {"enabled": False, "name": ""},
-        {"enabled": False, "name": ""},
-        {"enabled": False, "name": ""},
-        {"enabled": False, "name": ""},
-        {"enabled": False, "name": ""},
-        {"enabled": False, "name": ""},
-        {"enabled": False, "name": ""},
-        {"enabled": False, "name": ""},
-        {"enabled": False, "name": ""},
-    ]
+    return [{"enabled": i == 0, "name": ""} for i in range(MAX_POSITIONS)]
 
 
 def _normalize_positions(raw_positions: List[Dict]) -> List[Dict]:
     defaults = _default_positions()
     normalized = []
-    for i in range(12):
+    for i in range(MAX_POSITIONS):
         item = raw_positions[i] if i < len(raw_positions) and isinstance(raw_positions[i], dict) else {}
         normalized.append({
             "enabled": bool(item.get("enabled", defaults[i]["enabled"])),

@@ -38,7 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from controller import BleController
 from serial_handler import SerialHandler
 from experiment import IntegratedExperimentController
-from state import AppState, save_state, load_state
+from state import AppState, save_state, load_state, MAX_POSITIONS
 from camera import CameraStreamer
 
 # ── Global singletons (initialised in startup) ────────────────────────────────
@@ -259,6 +259,7 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json({"type": "connected", "message": "Connected to server"})
         if app_state:
             await ws.send_json({"type": "state_sync", "state": {
+                "max_positions":     MAX_POSITIONS,
                 "serial_connected":  serial_handler.is_connected if serial_handler else False,
                 "serial_device_id":  serial_handler.current_device_id if serial_handler else "",
                 "serial_port":       app_state.serial_port,
@@ -359,7 +360,7 @@ async def _handle_message(data: dict, ws: WebSocket):
                 await ws.send_json({"type": "error", "message": "Another experiment is already running"})
                 return
 
-            sample_names      = data.get("sample_names", [""] * 5)
+            sample_names      = data.get("sample_names", [""] * MAX_POSITIONS)
             enabled_positions = [int(p) for p in data.get("enabled_positions", [1])]
             desorption_time       = float(data.get("desorption_time", app_state.desorption_time))
             pre_conditioning_time = float(data.get("pre_conditioning_time", app_state.pre_conditioning_time))
@@ -368,7 +369,7 @@ async def _handle_message(data: dict, ws: WebSocket):
             # Persist updated settings
             app_state.positions = [
                 {"enabled": (i + 1) in enabled_positions, "name": sample_names[i] if i < len(sample_names) else ""}
-                for i in range(12)
+                for i in range(MAX_POSITIONS)
             ]
             app_state.desorption_time = desorption_time
             app_state.pre_conditioning_time = pre_conditioning_time

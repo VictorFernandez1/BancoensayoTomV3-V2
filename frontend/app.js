@@ -21,6 +21,9 @@ let _positionCheckModalId = null;
 let _timersPausedByPositionCheck = false;
 let _pausedPhaseUpdate = null;
 
+// ── Max positions (set from server state_sync; fallback 12) ───────────────
+let _maxPositions = 12;
+
 // ── Position table references (built dynamically) ─────────────────────────
 let _logAutoScrollEnabled = true;
 const LOG_NEAR_BOTTOM_PX = 40;
@@ -299,6 +302,9 @@ function syncState(state) {
     if (!state) return;
     applyingConfig = true;
     try {
+        // Max positions from server (single source of truth)
+        if (state.max_positions) _maxPositions = state.max_positions;
+
         // TOMV3 params
         if (state.experiment_params) {
             const p = state.experiment_params;
@@ -328,7 +334,7 @@ function syncState(state) {
 
         if (Array.isArray(state.positions)) {
             state.positions.forEach((pos, i) => {
-                if (i >= 5) return;
+                if (i >= checkboxes.length) return;
                 checkboxes[i].checked = !!pos.enabled;
                 sampleNameInputs[i].disabled = !pos.enabled;
                 sampleNameInputs[i].value    = pos.name || '';
@@ -1206,7 +1212,7 @@ function showModal(headerClass, title, body) {
 
 function buildPositionTable() {
     const tbody = document.getElementById('positionsTable');
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < _maxPositions; i++) {
         const tr = document.createElement('tr');
 
         // Checkbox
@@ -1254,7 +1260,7 @@ function onPositionChecked(index, isChecked) {
             }
         }
     } else {
-        for (let i = index + 1; i < 5; i++) {
+        for (let i = index + 1; i < _maxPositions; i++) {
             if (checkboxes[i].checked) {
                 checkboxes[i].checked = false;
                 sampleNameInputs[i].disabled = true;

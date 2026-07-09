@@ -42,7 +42,7 @@ Integrated Experiment Controller orchestrates the full measurement workflow:
 - **Manual CSV export** also available on demand (Tab 1 → Export button).
 - **Configurable save folder** — defaults to the user's Downloads folder.
 - **Configurable sweep parameters**: temperature range, voltage range, steps, cycles, sweep type (TR, SQ, SWT, SN).
-- **Cascading position checkboxes**: enabling position N automatically enables all prior positions.
+- **12 configurable sample positions** (up/down via `MAX_POSITIONS` in `state.py`): **Cascading position checkboxes** — enabling position N automatically enables all prior positions.
 - **Two-phase cancellation**: Cancel sends an emergency `STOP` command that immediately halts the physical motor, then the arm always moves to the safe OUT position (`MOVEOUTHOME`).
 - **Persistent configuration**: ALL settings (TOMV3 params, sweep type, Banco params) are saved to `backend/session.json` and restored on next launch — no need to click "Enviar" to persist a value change.
 - **Unexpected disconnect modals**: both TOMV3 serial and ESP32 BLE connections show a prominent modal alert if the connection is lost unexpectedly (user-initiated disconnects do not trigger the alert).
@@ -330,6 +330,7 @@ Each plot keeps the last 100 data points.
 3. All other fields are auto-saved to `session.json` as you type (500 ms debounce).
 
 **Posiciones de Muestras**
+- Up to 12 positions are shown (see `MAX_POSITIONS` in `backend/state.py`).
 - Check the boxes for the positions you want to measure.
 - **Cascading logic**: enabling position N automatically enables all positions before it; disabling N disables all positions after it.
 - Enter a sample name for each enabled position. The name is embedded in the CSV filename.
