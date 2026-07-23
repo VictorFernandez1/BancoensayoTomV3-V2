@@ -511,8 +511,8 @@ Commands sent to the ESP32 (`ESP32_STEPPER`) over BLE — written to the Command
 |---|---|---|
 | `MOVEINHOME` | Linear motor inward until IN limit switch |
 | `MOVEOUTHOME` | Linear motor outward until OUT limit switch (safe position) |
-| `MOVECLOCKWISE` | Rotate carousel to next optical-sensor position |
-| `MOVECOUNTERCLOCKWISE` | Rotate carousel backward one position |
+| `MOVECLOCKWISE[:<pos>]` | Rotate carousel to next optical-sensor position; optional `<pos>` (1–12) selects centering steps |
+| `MOVECOUNTERCLOCKWISE[:<pos>]` | Rotate carousel backward one position; optional `<pos>` (1–12) selects centering steps |
 | `ROTATIONALHOMING` | Find the carousel home flag via optical sensor |
 | `STOP` | Immediately halt any in-progress movement |
 | `FANON` | Turn desorption fan ON |

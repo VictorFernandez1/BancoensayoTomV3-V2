@@ -369,7 +369,7 @@ class IntegratedExperimentController:
 
                     if not is_last:
                         await self._status(f"Pos {position}: Moving to next position…")
-                        ok = await self.banco.send_command("MOVECLOCKWISE")
+                        ok = await self.banco.send_command(f"MOVECLOCKWISE:{position + 1}")
                         if self.banco.cancel_requested:
                             await self._ensure_fan_off("rotation interruption")
                             break

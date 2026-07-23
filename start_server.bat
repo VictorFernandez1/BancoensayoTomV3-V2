@@ -22,11 +22,11 @@ for /f "tokens=5" %%a in ('%SystemRoot%\System32\netstat.exe -aon ^| findstr :80
 
 REM ── Start server using venv Python directly (from backend/ so imports resolve) ──
 echo.
-echo Starting server at http://localhost:8011
+echo Starting server at http://localhost:8013
 echo Press Ctrl+C to stop.
 echo.
 
 cd backend
-"%~dp0integratedvenv\Scripts\python.exe" -m uvicorn main:app --host 0.0.0.0 --port 8011
+"%~dp0integratedvenv\Scripts\python.exe" -m uvicorn main:app --host 0.0.0.0 --port 8013
 
 pause
