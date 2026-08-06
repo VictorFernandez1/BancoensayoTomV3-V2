@@ -18,7 +18,9 @@ let _integratedStartPending = false;
 let applyingConfig          = false;   // suppress cascade during bulk-apply
 let _intentionalEspDisconnect = false;  // distinguish user-initiated from unexpected
 let _positionCheckModalId = null;
-let _timersPausedByPositionCheck = false;
+let _timerPauseDepth = 0;               // >0 while timers are frozen (error pause / position check)
+let _experimentPaused = false;          // experiment paused on motor/BLE error (banner shown)
+let _lastPauseMsg = null;               // last experiment_pause payload for banner refresh
 let _pausedPhaseUpdate = null;
 
 // ── Max positions (set from server state_sync; fallback 12) ───────────────
@@ -72,7 +74,7 @@ function playNotificationTone(kind = 'info') {
 
     const profiles = {
         success: { frequency: 880, duration: 1.5, gain: 0.09 },
-        warning: { frequency: 620, duration: 1.5, gain: 0.09 },
+        warning: { frequency: 1200, duration: 1.5, gain: 0.09 },
         error:   { frequency: 380, duration: 1.5, gain: 0.10 },
         info:    { frequency: 520, duration: 1.5, gain: 0.07 },
     };
@@ -191,7 +193,7 @@ function handleMessage(msg) {
             if (isManualExperimentRunning || isManualPhase(msg.phase)) {
                 updateManualTimerPhase(msg.phase);
             } else {
-                if (_timersPausedByPositionCheck) {
+                if (_timerPauseDepth > 0) {
                     _pausedPhaseUpdate = msg;
                 } else {
                     updateTimerDisplay(msg.remaining, msg.total, msg.phase);
@@ -258,6 +260,14 @@ function handleMessage(msg) {
 
         case 'position_check_cleared':
             closePositionCheckModal();
+            break;
+
+        case 'experiment_pause':
+            handleExperimentPause(msg);
+            break;
+
+        case 'experiment_resumed':
+            handleExperimentResumed();
             break;
 
         case 'serial_disconnected':
@@ -381,6 +391,12 @@ function syncState(state) {
                         cycles_total: es.position_check_cycles_total,
                         response: es.position_check_response,
                         message: 'Verifica la posicion de la muestra antes de continuar.',
+                    });
+                }
+                if (es.paused) {
+                    handleExperimentPause({
+                        reasons: es.pause_reasons || [],
+                        ble_connected: !!es.ble_connected,
                     });
                 }
             }
@@ -617,27 +633,32 @@ async function downloadAutoSave(filename, url) {
 //  ESP32 (BANCO DE ENSAYO)
 // ══════════════════════════════════════════════════════════════════════════
 
+function connectEsp() {
+    const macInput = document.getElementById('ble-address');
+    const rawMac = (macInput?.value || '').trim();
+    const normalizedMac = normalizeMacAddress(rawMac);
+
+    if (rawMac && !normalizedMac) {
+        showAlert('MAC inválida. Usa el formato AA:BB:CC:DD:EE:FF', 'warning');
+        return Promise.resolve(false);
+    }
+
+    if (macInput && normalizedMac) {
+        macInput.value = normalizedMac;
+    }
+
+    document.getElementById('connectEspBtn').disabled = true;
+    document.getElementById('connectEspBtn').textContent = 'Escaneando…';
+    send({ type: 'connect_ble', address: normalizedMac || '' });
+    return Promise.resolve(true);
+}
+
 function toggleEspConnection() {
     if (isESPconnected) {
         _intentionalEspDisconnect = true;
         send({ type: 'disconnect_ble' });
     } else {
-        const macInput = document.getElementById('ble-address');
-        const rawMac = (macInput?.value || '').trim();
-        const normalizedMac = normalizeMacAddress(rawMac);
-
-        if (rawMac && !normalizedMac) {
-            showAlert('MAC inválida. Usa el formato AA:BB:CC:DD:EE:FF', 'warning');
-            return;
-        }
-
-        if (macInput && normalizedMac) {
-            macInput.value = normalizedMac;
-        }
-
-        document.getElementById('connectEspBtn').disabled = true;
-        document.getElementById('connectEspBtn').textContent = 'Escaneando…';
-        send({ type: 'connect_ble', address: normalizedMac || '' });
+        connectEsp();
     }
 }
 
@@ -660,8 +681,10 @@ function setEspStatus(message, connected) {
         btn.className        = 'btn btn-primary btn-sm';
         btn.disabled         = false;
 
-        // Show modal only on unexpected disconnection (not user-initiated)
-        if (wasConnected && !_intentionalEspDisconnect) {
+        // Show modal only on unexpected disconnection (not user-initiated).
+        // While an integrated experiment is running the pause banner already
+        // informs the user — an extra modal would be redundant.
+        if (wasConnected && !_intentionalEspDisconnect && !isExperimentRunning) {
             playNotificationTone('error');
             appendLog(`⚠ ESP32 DESCONECTADO: ${message}`, 'error');
             showModal(
@@ -671,6 +694,12 @@ function setEspStatus(message, connected) {
             );
         }
         _intentionalEspDisconnect = false;
+    }
+
+    // Keep the pause banner's BLE state in sync (e.g. reconnect attempt
+    // succeeded or failed while the experiment is paused).
+    if (_experimentPaused && _lastPauseMsg) {
+        _renderPauseBanner({ ..._lastPauseMsg, ble_connected: isESPconnected });
     }
 }
 
@@ -777,6 +806,11 @@ function setExperimentRunning(running) {
         if (manualBtn) manualBtn.disabled = true;
     } else {
         closePositionCheckModal();
+        _experimentPaused = false;
+        _lastPauseMsg = null;
+        _timerPauseDepth = 0;
+        _pausedPhaseUpdate = null;
+        _clearPauseBanner();
         startBtn.style.display = 'block';
         stopBtn.style.display  = 'none';
         startBtn.disabled      = isManualExperimentRunning;
@@ -984,8 +1018,8 @@ function stopGlobalTimer() {
 }
 
 function pauseTimerVisuals() {
-    if (_timersPausedByPositionCheck) return;
-    _timersPausedByPositionCheck = true;
+    _timerPauseDepth++;
+    if (_timerPauseDepth > 1) return;  // already paused by another source
     syncGlobalElapsedFromClock();
     _globalTimer.pausedAtMs = Date.now();
     if (_globalTimer.interval) {
@@ -996,8 +1030,9 @@ function pauseTimerVisuals() {
 }
 
 function resumeTimerVisuals() {
-    if (!_timersPausedByPositionCheck) return;
-    _timersPausedByPositionCheck = false;
+    if (_timerPauseDepth === 0) return;
+    _timerPauseDepth--;
+    if (_timerPauseDepth > 0) return;  // still paused by another source
 
     if (_globalTimer.pausedAtMs && _globalTimer.startMs > 0) {
         const pausedDurationMs = Date.now() - _globalTimer.pausedAtMs;
@@ -1098,6 +1133,102 @@ function closePositionCheckModal() {
         _positionCheckModalId = null;
         resumeTimerVisuals();
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  EXPERIMENT PAUSE BANNER (motor / BLE errors)
+// ══════════════════════════════════════════════════════════════════════════
+
+const PAUSE_BANNER_ID = 'experiment-pause-banner';
+
+function _esc(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                          .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _renderPauseBanner(msg) {
+    const reasons = Array.isArray(msg.reasons) ? msg.reasons : [];
+    const hasBle = reasons.some(r => r && r.type === 'ble');
+    const bleConnected = !!msg.ble_connected;
+
+    const listItems = reasons.length
+        ? reasons.map(r => `<li>${_esc(r.message || r.type)}</li>`).join('')
+        : '<li>Se produjo un error durante el experimento.</li>';
+
+    const reconnectBtn = (hasBle && !bleConnected)
+        ? `<button type="button" class="btn btn-warning btn-sm flex-fill" id="btn-pause-reconnect">
+               <i class="bi bi-bluetooth"></i> Reconectar BLE
+           </button>`
+        : '';
+
+    let banner = document.getElementById(PAUSE_BANNER_ID);
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = PAUSE_BANNER_ID;
+        banner.className = 'experiment-pause-banner';
+        document.body.appendChild(banner);
+    }
+
+    banner.innerHTML = `
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <i class="bi bi-exclamation-triangle-fill pause-banner-icon"></i>
+            <div class="flex-fill">
+                <strong class="d-block">Experimento en pausa</strong>
+                <span class="pause-banner-msg">Revisa el sistema antes de continuar:</span>
+                <ul class="pause-banner-list">${listItems}</ul>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+                ${reconnectBtn}
+                <button type="button" class="btn btn-success btn-sm flex-fill" id="btn-pause-continue">
+                    <i class="bi bi-play-fill"></i> Continuar
+                </button>
+                <button type="button" class="btn btn-outline-danger btn-sm flex-fill" id="btn-pause-cancel">
+                    <i class="bi bi-x-lg"></i> Cancelar
+                </button>
+            </div>
+        </div>`;
+
+    const reconnectBtnEl = document.getElementById('btn-pause-reconnect');
+    if (reconnectBtnEl) {
+        reconnectBtnEl.addEventListener('click', () => {
+            reconnectBtnEl.disabled = true;
+            reconnectBtnEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Conectando…';
+            connectEsp();
+        });
+    }
+    document.getElementById('btn-pause-continue').addEventListener('click', () => {
+        send({ type: 'resume_experiment' });
+    });
+    document.getElementById('btn-pause-cancel').addEventListener('click', () => {
+        send({ type: 'cancel_experiment' });
+    });
+}
+
+function _clearPauseBanner() {
+    const banner = document.getElementById(PAUSE_BANNER_ID);
+    if (banner) banner.remove();
+}
+
+function handleExperimentPause(msg) {
+    if (!msg) return;
+    const isNew = !_experimentPaused;
+    _experimentPaused = true;
+    _lastPauseMsg = msg;
+    if (isNew) {
+        playNotificationTone('warning');
+        appendLog('⚠ EXPERIMENTO EN PAUSA — revisa el sistema', 'warning');
+        pauseTimerVisuals();
+    }
+    _renderPauseBanner(msg);
+}
+
+function handleExperimentResumed() {
+    if (!_experimentPaused) return;
+    _experimentPaused = false;
+    _lastPauseMsg = null;
+    _clearPauseBanner();
+    resumeTimerVisuals();
+    appendLog('▶ Experimento continuando…', 'success');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════//  EXPERIMENT COMPLETE / SERIAL DISCONNECT MODALS

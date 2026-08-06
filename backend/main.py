@@ -287,6 +287,9 @@ async def websocket_endpoint(ws: WebSocket):
                     "current_phase_description": experiment_ctrl.current_phase_description,
                     "current_phase_total":        experiment_ctrl.current_phase_total,
                     "current_phase_remaining":    experiment_ctrl.current_phase_remaining,
+                    "paused":                    experiment_ctrl.experiment_paused,
+                    "pause_reasons":             experiment_ctrl.pause_reasons,
+                    "ble_connected":             banco_controller.connected if banco_controller else False,
                 } if (experiment_ctrl and experiment_ctrl.experiment_running) else None,
             }})
 
@@ -414,6 +417,9 @@ async def _handle_message(data: dict, ws: WebSocket):
 
         elif msg_type == "cancel_experiment":
             await experiment_ctrl.cancel_experiment()
+
+        elif msg_type == "resume_experiment":
+            await experiment_ctrl.resume_experiment()
 
         # ── Config save ─────────────────────────────────────────────────────
 

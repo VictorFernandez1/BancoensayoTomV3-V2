@@ -113,3 +113,34 @@ canvas {
     .log-terminal  { height: 200px; }
 }
 
+/* ── Experiment pause banner (motor / BLE errors) ────────────────────────── */
+.experiment-pause-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 2000;
+    background: linear-gradient(90deg, #fd7e14, #f39c12);
+    color: #fff;
+    padding: 10px 16px;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+    font-size: 0.9rem;
+}
+
+.experiment-pause-banner .pause-banner-icon {
+    font-size: 1.6rem;
+}
+
+.experiment-pause-banner .pause-banner-list {
+    margin: 4px 0 0 0;
+    padding-left: 1.1rem;
+}
+
+.experiment-pause-banner .pause-banner-list li {
+    margin-bottom: 1px;
+}
+
+.experiment-pause-banner button {
+    min-width: 120px;
+}
+

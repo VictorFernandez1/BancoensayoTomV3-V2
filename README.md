@@ -46,8 +46,14 @@ Integrated Experiment Controller orchestrates the full measurement workflow:
 - **Configurable cycle gap time** (`cycle_gap_time`, default 0 s): adds a delay between experiment cycles after the carousel returns home, with a countdown shown in the UI.
 - **Two-phase cancellation**: Cancel sends an emergency `STOP` command that immediately halts the physical motor, then the arm always moves to the safe OUT position (`MOVEOUTHOME`).
 - **Persistent configuration**: ALL settings (TOMV3 params, sweep type, Banco params) are saved to `backend/session.json` and restored on next launch — no need to click "Enviar" to persist a value change.
-- **Unexpected disconnect modals**: both TOMV3 serial and ESP32 BLE connections show a prominent modal alert if the connection is lost unexpectedly (user-initiated disconnects do not trigger the alert).
+- **Unexpected disconnect modals**: both TOMV3 serial and ESP32 BLE connections show a prominent modal alert if the connection is lost unexpectedly (user-initiated disconnects do not trigger the alert). While an integrated experiment is running, the modal is suppressed in favour of the pause banner.
 - **Browser-side sound alerts (Web Audio API)**: audible notifications are generated in the browser device when the experiment-completed popup appears and on critical error popups (serial disconnect, unexpected BLE disconnect, and position-check mismatch popup).
+- **Pause-on-error (integrated experiments)**: if a motor (BLE ESP32) command fails or the Bluetooth link drops during an integrated experiment, the experiment **pauses** instead of auto-cancelling. Timers freeze, the run loop blocks, and a banner appears with **Reconectar BLE** / **Continuar** / **Cancelar**:
+  - **Continuar** retries the exact failed motor command; if the failure was a BLE drop, reconnect first, then click Continuar.
+  - **Cancelar** performs the normal safety sequence (emergency STOP + MOVEOUTHOME + FANOFF).
+  - Applies everywhere, including the initial homing and desorption phases; the countdown and progress bars resume exactly where they froze.
+  - Multiple causes (BLE drop + motor failure) merge into a single banner with deduplicated reasons.
+  - Plays a high-pitched warning tone when the pause banner appears.
 - **Dual progress bars** during an experiment: a green per-phase bar (pre-conditioning / acquisition / desorption) and a blue global bar showing overall experiment progress and time remaining.
 - **Manual experiment completion alerts**: success sound + completion popup at the end of a manual run.
 - **Mutual mode lock**: manual and integrated experiments cannot run at the same time; each start button is disabled while the other mode runs.
@@ -386,6 +392,8 @@ For each cycle (1 … Ciclos):
 Repeat for remaining cycles.
 ```
 
+> **Pause-on-error:** at any motor step above (including the initial `MOVEOUTHOME`/`ROTATIONALHOMING`), if the ESP32 fails to acknowledge a command, or the BLE link drops at any point, the sequence **pauses** instead of cancelling. The countdowns and progress bars freeze, and the UI waits for the operator before retrying the exact command.
+
 ## Manual Experiment Sequence (detailed)
 
 ```
@@ -471,6 +479,7 @@ TOMV3D1_File_20260326_130124_Prueba.csv
 | `connect_ble` | — | Scan and connect to ESP32_STEPPER via BLE |
 | `disconnect_ble` | — | Disconnect from ESP32 |
 | `start_experiment` | `sample_names[]`, `enabled_positions[]`, `desorption_time`, `cycle_gap_time`, `cycles` | Start integrated experiment |
+| `resume_experiment` | — | User chose **Continuar** after a pause; clears the pause and retries the failed motor command |
 | `start_manual_experiment` | `sample_name`, `pre_conditioning_time` | Start manual experiment (no Banco motors) |
 | `cancel_experiment` | — | Request cancellation (emergency STOP + safety MOVEOUTHOME) |
 | `save_config` | `config` | Persist Banco de Ensayo settings |
@@ -494,6 +503,8 @@ TOMV3D1_File_20260326_130124_Prueba.csv
 | `timer_start` | `phase`, `total_seconds`, `description` | Countdown phase begins |
 | `timer_update` | `remaining`, `total`, `phase` | Countdown tick |
 | `elapsed_time` | `seconds` | Seconds elapsed in current wait |
+| `experiment_pause` | `reasons[]`, `ble_connected`, `mode` | Integrated experiment paused on a motor/BLE error (banner shown) |
+| `experiment_resumed` | — | Pause cleared; experiment continuing |
 | `experiment_complete` | `cancelled` (bool), `error` (str, optional), `message` | Experiment finished, cancelled, or failed with error |
 | `manual_experiment_complete` | `success`, `cancelled`, `sample_name`, `message` | Manual experiment finished |
 | `auto_save_result` | `success`, `filename`, `rows`, `download_url` / `message` | CSV staged on server; client downloads the file |
@@ -551,6 +562,11 @@ The ESP32 responds via notifications on the Status characteristic (`AA000003-…
 **Experiment does not cancel immediately**
 - The cancel sequence is: emergency `STOP` (halts the motor mid-step) → brief settle → async task cancel → safety `MOVEOUTHOME`. This typically completes in under a second.
 
+**Experiment is paused on an error**
+- This is expected: a failed motor command or an unexpected BLE drop pauses the experiment instead of cancelling it.
+- Fix the problem (power-cycle the ESP32, clear a mechanical blockage, or click **Reconectar BLE** if the reason is a BLE drop), then click **Continuar** to retry the exact command, or **Cancelar** to abort safely.
+- If the pause banner does not clear after **Continuar**, verify the ESP32 is connected and powered before retrying.
+
 **Manual experiment start is disabled**
 - This is expected while an integrated experiment is running.
 
@@ -577,6 +593,7 @@ The ESP32 responds via notifications on the Status characteristic (`AA000003-…
 - Check the browser tab is not muted and the OS output volume/device is correct.
 - Ensure your browser supports Web Audio API (modern Chrome/Edge/Firefox/Safari do).
 - Remember sounds play on the machine running the browser UI, not on the backend server host unless they are the same machine.
+- The pause-on-error banner plays a high-pitched warning tone; ensure audio was unlocked with at least one tap on the page first (phones: keep the screen on and the tab active — iOS silences Web Audio with the mute switch).
 
 ---
 

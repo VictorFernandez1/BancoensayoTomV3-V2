@@ -49,6 +49,19 @@ class IntegratedExperimentController:
         self.experiment_mode: str = ""
         self._task: Optional[asyncio.Task] = None
 
+        # ── Pause / resume state (motor or BLE errors) ─────────────────────
+        # When an error occurs the experiment pauses and waits for the user
+        # to inspect the bench, reconnect BLE if needed, then continue or
+        # cancel. The run loop blocks on _resume_event until then.
+        self.experiment_paused: bool = False
+        self.pause_reasons: List[Dict] = []
+        self._resume_event: Optional[asyncio.Event] = None
+        self._fastapi_loop: Optional[asyncio.AbstractEventLoop] = None
+
+        # Ask the BLE controller to notify us on unexpected disconnect so we
+        # can pause the experiment immediately (not just at the next command).
+        self.banco.on_unexpected_disconnect = self._on_unexpected_ble_disconnect
+
         # ── Live state (for reconnecting clients) ────────────────────────────
         self.current_position: int        = 0
         self.current_cycle: int           = 0
@@ -84,11 +97,20 @@ class IntegratedExperimentController:
             await self._log("Experiment already running — ignoring request.")
             return False
 
+        # Capture the event loop so BLE-thread callbacks can hop back here.
+        try:
+            self._fastapi_loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self._fastapi_loop = None
+
         # Reset cancel flag on controller
         self.banco.cancel_requested = False
         self.experiment_error = None
         self.banco.motor_is_in = False
         self.fan_is_on = False
+        self.experiment_paused = False
+        self.pause_reasons = []
+        self._resume_event = None
 
         self.experiment_running = True
         self.experiment_mode = "integrated"
@@ -118,6 +140,9 @@ class IntegratedExperimentController:
             return False
 
         self.banco.cancel_requested = False
+        self.experiment_paused = False
+        self.pause_reasons = []
+        self._resume_event = None
         self.experiment_running = True
         self.experiment_mode = "manual"
         self._task = asyncio.create_task(
@@ -157,6 +182,110 @@ class IntegratedExperimentController:
         if self._task:
             self._task.cancel()
 
+    # ── Pause / resume on error ──────────────────────────────────────────────
+
+    def _on_unexpected_ble_disconnect(self):
+        """
+        Called from the BLE loop thread when the ESP32 drops unexpectedly.
+        Hops onto the FastAPI loop to pause a running integrated experiment.
+        """
+        if not self.experiment_running or self.experiment_mode != "integrated":
+            return
+        loop = self._fastapi_loop
+        if loop is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(self._pause_from_ble(), loop)
+        except Exception:
+            pass
+
+    async def _pause_from_ble(self):
+        """Pause an experiment because the BLE connection was lost."""
+        await self._pause_for_user({
+            "type": "ble",
+            "message": "Conexión BLE con el ESP32 perdida inesperadamente.",
+        })
+
+    async def _pause_for_user(self, reason: Dict):
+        """
+        Set up a pause on error. The actual blocking wait is done by the run
+        loop (via _await_resume_or_cancel) so that short-lived helper tasks
+        (e.g. _pause_from_ble) never leak while awaiting.
+        Re-entrant: multiple reasons (e.g. BLE drop + motor failure) are
+        merged into a single pause and shown together in the UI banner.
+        """
+        if not self.experiment_running or self.experiment_mode != "integrated":
+            return
+
+        if not self.experiment_paused:
+            self.experiment_paused = True
+            self._resume_event = asyncio.Event()
+
+        # Merge / dedupe by reason type so re-emits don't stack duplicates.
+        if not any(r.get("type") == reason.get("type") for r in self.pause_reasons):
+            self.pause_reasons.append(reason)
+        elif reason.get("type") == "motor" and reason not in self.pause_reasons:
+            # Motor failures can repeat for the same command — keep the newest.
+            self.pause_reasons = [r for r in self.pause_reasons
+                                  if r.get("type") != "motor"] + [reason]
+
+        await self._emit_pause()
+
+        # Safety: best-effort fan OFF while the bench is being handled.
+        if self.fan_is_on:
+            await self._ensure_fan_off("paused for user check")
+
+    async def _emit_pause(self):
+        await self._emit("experiment_pause",
+                         reasons=self.pause_reasons,
+                         ble_connected=bool(self.banco.connected),
+                         mode=self.experiment_mode)
+        await self._status("⚠ PAUSADO — revisa el sistema antes de continuar")
+
+    async def resume_experiment(self):
+        """User chose 'Continuar': clear the pause and let the loop retry."""
+        if not self.experiment_paused:
+            return
+        self.experiment_paused = False
+        self.pause_reasons = []
+        if self._resume_event:
+            self._resume_event.set()
+        await self._emit("experiment_resumed")
+        await self._status("Continuando…")
+
+    async def _motor_command(self, label: str, command: str) -> bool:
+        """
+        Send a motor command with pause-on-error behaviour:
+          - on success returns True
+          - on failure pauses, waits for the user, then retries the command
+          - returns False only when a cancellation has been requested
+            (the run loop then handles the cancellation path).
+        """
+        while True:
+            if self.banco.cancel_requested:
+                return False
+
+            await self._status(f"{label}…")
+            await self._log(command)
+            ok = await self.banco.send_command(command)
+
+            if self.banco.cancel_requested:
+                return False
+            if ok:
+                return True
+
+            await self._pause_for_user({
+                "type": "motor",
+                "command": command,
+                "message": (
+                    f"Fallo al ejecutar {command} ({label}). "
+                    "Verifica el ESP32 y la posición de los motores, "
+                    "mueve los motores manualmente si es necesario."
+                ),
+            })
+            if await self._await_resume_or_cancel():
+                return False
+
     # ── Main sequence ─────────────────────────────────────────────────────────
 
     async def _run(
@@ -170,87 +299,67 @@ class IntegratedExperimentController:
         experiment_params: Dict,
         sweep_type: str = "TR",
     ):
-        # ── Auto-send TOMV3 parameters before the loop ─────────────────────
-        await self._log("Sending TOMV3 parameters…")
-        await self.serial.send_experiment_params(experiment_params)
-        await asyncio.sleep(3)  # small delay to ensure TOMV3 is ready for next command
-        await self._log(f"Sending sweep type: {sweep_type}")
-        await self.serial.send_sweep_type(sweep_type)
-        await asyncio.sleep(0.5)
-
-        # Compute acquisition duration from TOMV3 sweep parameters
-        steps = int(experiment_params.get("Steps", 21))
-        veggie_cycles = int(experiment_params.get("Cycles", 4))
-        acq_duration = (steps + 1) * veggie_cycles * 2 + 30
-
-        # Runtime estimate includes motor movements per position and cycle return-home rotations.
-        linear_motor_time = 18       # MOVEDOWN / MOVEUP (seconds each)
-        rotational_motor_time = 1 # MOVECLOCKWISE / MOVECOUNTERCLOCKWISE (seconds each)
-
-        total_positions = len(enabled_positions)
-        per_position_seconds = (
-            pre_conditioning_time + acq_duration + desorption_time + (2 * linear_motor_time)
-        )
-        per_cycle_rotation_seconds = (total_positions - 1) * 2 * rotational_motor_time
-        cycle_gap_total = max(0, (cycles - 1)) * cycle_gap_time
-        total_experiment_seconds = math.ceil(
-            desorption_time + cycles * ((total_positions * per_position_seconds) + per_cycle_rotation_seconds) + cycle_gap_total
-        )
-
-        # Persist for reconnecting clients
-        self.total_positions          = total_positions
-        self.total_experiment_seconds = total_experiment_seconds
-        self.cycles_total             = cycles
-        self.experiment_elapsed_seconds = 0
-
-        await self._emit("experiment_start",
-                         total_seconds=total_experiment_seconds,
-                         total_positions=total_positions)
-
-        await self._log("=" * 60)
-        await self._log("INTEGRATED EXPERIMENT STARTED")
-        await self._log(f"Positions: {enabled_positions}  |  Cycles: {cycles}")
-        if cycle_gap_time > 0:
-            await self._log(f"Cycle gap: {cycle_gap_time}s")
-        await self._log(f"Pre-cond: {pre_conditioning_time}s  |  Desorption: {desorption_time}s  |  Acquisition: {acq_duration}s")
-        await self._log(f"Staging folder: {self.exports_dir}")
-        await self._log("=" * 60)
-
         try:
+            # ── Auto-send TOMV3 parameters before the loop ─────────────────
+            await self._log("Sending TOMV3 parameters…")
+            await self.serial.send_experiment_params(experiment_params)
+            await asyncio.sleep(3)  # small delay to ensure TOMV3 is ready for next command
+            await self._log(f"Sending sweep type: {sweep_type}")
+            await self.serial.send_sweep_type(sweep_type)
+            await asyncio.sleep(0.5)
+
+            # Compute acquisition duration from TOMV3 sweep parameters
+            steps = int(experiment_params.get("Steps", 21))
+            veggie_cycles = int(experiment_params.get("Cycles", 4))
+            acq_duration = (steps + 1) * veggie_cycles * 2 + 30
+
+            # Runtime estimate includes motor movements per position and cycle return-home rotations.
+            linear_motor_time = 18       # MOVEDOWN / MOVEUP (seconds each)
+            rotational_motor_time = 1 # MOVECLOCKWISE / MOVECOUNTERCLOCKWISE (seconds each)
+
+            total_positions = len(enabled_positions)
+            per_position_seconds = (
+                pre_conditioning_time + acq_duration + desorption_time + (2 * linear_motor_time)
+            )
+            per_cycle_rotation_seconds = (total_positions - 1) * 2 * rotational_motor_time
+            cycle_gap_total = max(0, (cycles - 1)) * cycle_gap_time
+            total_experiment_seconds = math.ceil(
+                desorption_time + cycles * ((total_positions * per_position_seconds) + per_cycle_rotation_seconds) + cycle_gap_total
+            )
+
+            # Persist for reconnecting clients
+            self.total_positions          = total_positions
+            self.total_experiment_seconds = total_experiment_seconds
+            self.cycles_total             = cycles
+            self.experiment_elapsed_seconds = 0
+
+            await self._emit("experiment_start",
+                             total_seconds=total_experiment_seconds,
+                             total_positions=total_positions)
+
+            await self._log("=" * 60)
+            await self._log("INTEGRATED EXPERIMENT STARTED")
+            await self._log(f"Positions: {enabled_positions}  |  Cycles: {cycles}")
+            if cycle_gap_time > 0:
+                await self._log(f"Cycle gap: {cycle_gap_time}s")
+            await self._log(f"Pre-cond: {pre_conditioning_time}s  |  Desorption: {desorption_time}s  |  Acquisition: {acq_duration}s")
+            await self._log(f"Staging folder: {self.exports_dir}")
+            await self._log("=" * 60)
+
             # Initial moveouthome to ensure the arm is in a known position before starting the experiment.
-            await self._status("Initial moveouthome…")
-            await self._log("MOVEOUTHOME")
-            ok = await self.banco.send_command("MOVEOUTHOME")
+            ok = await self._motor_command("Initial moveouthome", "MOVEOUTHOME")
             self.banco.motor_is_in = False
             if self.banco.cancel_requested:
                 raise asyncio.CancelledError()
-            if not ok:
-                self.experiment_error = "Initial MOVEOUTHOME failed — arm could not move to safe position"
-                await self._log(f"⚠ {self.experiment_error}")
-                await self._status(self.experiment_error)
-                await self._emit("experiment_complete", cancelled=False, error=self.experiment_error, message=self.experiment_error)
-                return
-            else:
+            if ok:
                 await self._log("✓ MOVEOUTHOME completed successfully.")
-                #await self._status("Initial moveouthome completed.")
 
             # Inital rotational homing to ensure starting position is known
-            await self._status("Initial rotational homing…")
-            await self._log("ROTATIONALHOMING")
-            # Send command and wait for confirmation
-            ok = await self.banco.send_command("ROTATIONALHOMING")
+            ok = await self._motor_command("Initial rotational homing", "ROTATIONALHOMING")
             if self.banco.cancel_requested:
                 raise asyncio.CancelledError()
-            if not ok:
-                self.experiment_error = "Initial ROTATIONALHOMING failed — carousel position unknown"
-                await self._log(f"⚠ {self.experiment_error}")
-                await self._status(self.experiment_error)
-                await self._emit("experiment_complete", cancelled=False, error=self.experiment_error, message=self.experiment_error)
-                return
-
-            else:
+            if ok:
                 await self._log("✓ ROTATIONALHOMING completed successfully.")
-                #wait self._status("Initial rotational homing completed.")
 
 
 
@@ -311,18 +420,14 @@ class IntegratedExperimentController:
 
 
                     # 2. MOVEINHOME ────────────────────────────────────────────
-                    await self._status(f"Pos {position}: Moving IN…")
-                    await self._log("MOVEINHOME")
-                    ok = await self.banco.send_command("MOVEINHOME")
+                    ok = await self._motor_command(
+                        f"Pos {position}: Moving IN", "MOVEINHOME"
+                    )
                     if self.banco.cancel_requested:
                         break
-                    if not ok:
-                        self.experiment_error = f"MOVEINHOME failed at Position {position} (Cycle {cycle})"
-                        await self._log(f"⚠ {self.experiment_error}")
-                        await self._status(self.experiment_error)
-                        break
-                    self.banco.motor_is_in = True
-                    await asyncio.sleep(0.1)
+                    if ok:
+                        self.banco.motor_is_in = True
+                        await asyncio.sleep(0.1)
 
                     # 4. Pre-conditioning countdown ──────────────────────────
                     await self._status(f"Pos {position}: Pre-conditioning ({pre_conditioning_time}s)…")
@@ -345,18 +450,14 @@ class IntegratedExperimentController:
                         break
 
                     # 6. MOVEOUTHOME ──────────────────────────────────────────────
-                    await self._status(f"Pos {position}: Moving OUT…")
-                    await self._log("MOVEOUTHOME")
-                    ok = await self.banco.send_command("MOVEOUTHOME")
+                    ok = await self._motor_command(
+                        f"Pos {position}: Moving OUT", "MOVEOUTHOME"
+                    )
                     self.banco.motor_is_in = False
                     if self.banco.cancel_requested:
                         break
-                    if not ok:
-                        self.experiment_error = f"MOVEOUTHOME failed at Position {position} (Cycle {cycle})"
-                        await self._log(f"⚠ {self.experiment_error}")
-                        await self._status(self.experiment_error)
-                        break
-                    await asyncio.sleep(0.1)
+                    if ok:
+                        await asyncio.sleep(0.1)
 
                     # 7. Fan ON + MOVECLOCKWISE (skip after last) + desorption (always) ────
                     await self._log("FANON")
@@ -368,18 +469,15 @@ class IntegratedExperimentController:
                         self.fan_is_on = True
 
                     if not is_last:
-                        await self._status(f"Pos {position}: Moving to next position…")
-                        ok = await self.banco.send_command(f"MOVECLOCKWISE:{position + 1}")
+                        ok = await self._motor_command(
+                            f"Pos {position}: Moving to next position",
+                            f"MOVECLOCKWISE:{position + 1}",
+                        )
                         if self.banco.cancel_requested:
                             await self._ensure_fan_off("rotation interruption")
                             break
-                        if not ok:
-                            self.experiment_error = f"MOVECLOCKWISE failed after Position {position} (Cycle {cycle})"
-                            await self._log(f"⚠ {self.experiment_error}")
-                            await self._status(self.experiment_error)
-                            await self._ensure_fan_off("rotation interruption")
-                            break
-                        await asyncio.sleep(0.1)
+                        if ok:
+                            await asyncio.sleep(0.1)
 
                     await self._status(f"Pos {position}: Desorption ({desorption_time}s)…")
                     cancelled = await self._countdown(
@@ -400,15 +498,10 @@ class IntegratedExperimentController:
                 if self.banco.cancel_requested or self.experiment_error:
                     break
 
-                await self._status(f"Cycle {cycle}/{cycles}: Returning home…")
-                await self._log("ROTATIONALHOMING")
-                ok = await self.banco.send_command("ROTATIONALHOMING")
+                ok = await self._motor_command(
+                    f"Cycle {cycle}/{cycles}: Returning home", "ROTATIONALHOMING"
+                )
                 if self.banco.cancel_requested:
-                    break
-                if not ok:
-                    self.experiment_error = f"ROTATIONALHOMING failed after Cycle {cycle} — carousel position unknown"
-                    await self._log(f"⚠ {self.experiment_error}")
-                    await self._status(self.experiment_error)
                     break
 
                 # ── Cycle gap countdown (delay between cycles) ────────────────
@@ -477,6 +570,9 @@ class IntegratedExperimentController:
             self.experiment_mode = ""
             self.banco.cancel_requested = False
             self.experiment_error = None
+            self.experiment_paused = False
+            self.pause_reasons = []
+            self._resume_event = None
             self.current_position = 0
             self.current_cycle    = 0
             self.cycles_total     = 0
@@ -584,8 +680,26 @@ class IntegratedExperimentController:
             self.experiment_running = False
             self.experiment_mode = ""
             self.banco.cancel_requested = False
+            self.experiment_paused = False
+            self.pause_reasons = []
+            self._resume_event = None
 
     # ── Countdown helper ──────────────────────────────────────────────────────
+
+    async def _await_resume_or_cancel(self) -> bool:
+        """
+        While the experiment is paused on an error, wait until the user
+        resumes or cancels it. Returns True if the caller should abort
+        (cancellation requested).
+        """
+        while self.experiment_paused:
+            if self.banco.cancel_requested:
+                return True
+            if self._resume_event is not None:
+                await self._resume_event.wait()
+            else:
+                await asyncio.sleep(0.1)
+        return False
 
     async def _countdown(self, phase: str, total_seconds: int, description: str) -> bool:
         """
@@ -607,6 +721,10 @@ class IntegratedExperimentController:
 
         for remaining in range(total_seconds, -1, -1):
             if self.banco.cancel_requested:
+                return True
+            # Pause on error: freeze the countdown (remaining is unchanged)
+            # until the user resumes the experiment or cancels it.
+            if await self._await_resume_or_cancel():
                 return True
             self.current_phase_remaining = remaining
             if self.broadcast_callback:

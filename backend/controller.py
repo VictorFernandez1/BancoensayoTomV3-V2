@@ -38,6 +38,11 @@ class BleController:
         self.cancel_requested = False
         self.motor_is_down = False
 
+        # Hook invoked from _on_ble_disconnect (BLE loop thread) so the
+        # experiment controller can pause the running experiment.
+        # The handler is responsible for hopping back onto the FastAPI loop.
+        self.on_unexpected_disconnect: Optional[Callable] = None
+
         self._client: Optional[BleakClient] = None
         self._pending_future: Optional[asyncio.Future] = None
         self._accept_ok_response = False
@@ -295,6 +300,11 @@ class BleController:
                 self._pending_future.set_exception,
                 ConnectionError("ESP32 disconnected unexpectedly"),
             )
+        try:
+            if self.on_unexpected_disconnect:
+                self.on_unexpected_disconnect()
+        except Exception:
+            pass
 
     # ── Thread-safe helpers (callable from BLE loop or any thread) ───────────
 
