@@ -43,6 +43,10 @@ class SerialHandler:
         self._command_response_event = asyncio.Event()
         self._command_lock = asyncio.Lock()
 
+        # Hook invoked from _read_loop when the serial link drops unexpectedly.
+        # Runs on the FastAPI event loop (the same loop _read_loop runs on).
+        self.on_unexpected_disconnect: Optional[Callable] = None
+
 
     # ── Port discovery ───────────────────────────────────────────────────────
 
@@ -119,6 +123,11 @@ class SerialHandler:
                     "type": "serial_disconnected",
                     "message": f"Serial port disconnected unexpectedly: {e}",
                 })
+            if self.on_unexpected_disconnect:
+                # Schedule as a separate task so the recovery path (which may
+                # reconnect and therefore cancel this very read-loop task) can
+                # run without self-cancellation issues.
+                asyncio.create_task(self.on_unexpected_disconnect())
 
     # ── Data parsing ─────────────────────────────────────────────────────────
 

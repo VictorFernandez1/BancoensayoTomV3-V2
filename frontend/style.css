@@ -114,12 +114,11 @@ canvas {
 }
 
 /* ── Experiment pause banner (motor / BLE errors) ────────────────────────── */
+/* Rendered in-flow (below the tab bar) so it never covers the tabs — this is
+   important on phones where the tab bar is at the top of the screen. */
 .experiment-pause-banner {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 2000;
+    margin: 0 0 12px 0;
+    border-radius: 8px;
     background: linear-gradient(90deg, #fd7e14, #f39c12);
     color: #fff;
     padding: 10px 16px;

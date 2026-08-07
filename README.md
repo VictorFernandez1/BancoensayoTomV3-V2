@@ -54,6 +54,13 @@ Integrated Experiment Controller orchestrates the full measurement workflow:
   - Applies everywhere, including the initial homing and desorption phases; the countdown and progress bars resume exactly where they froze.
   - Multiple causes (BLE drop + motor failure) merge into a single banner with deduplicated reasons.
   - Plays a high-pitched warning tone when the pause banner appears.
+  - The banner is rendered **in-flow below the tab bar**, so it never covers the tab buttons — important on phones.
+- **Unsupervised (auto-recovery) mode**: a "Modo no supervisado" checkbox in Tab 3 → Parámetros del Experimento. When enabled, an error during an integrated experiment is handled **automatically** instead of pausing:
+  - Failed motor command → reconnect serial if needed, reconnect BLE if needed, then re-send the command once; if it fails again → cancel.
+  - Failed BLE connection → auto-reconnect; if that fails → cancel.
+  - Failed serial link → auto-reopen; if that fails → cancel.
+  - Several incidents at once are retried in order (serial → BLE → motor); if any step fails → cancel.
+  - On auto-cancel the standard safety sequence runs and the frontend plays the **error tone** with a dedicated modal.
 - **Dual progress bars** during an experiment: a green per-phase bar (pre-conditioning / acquisition / desorption) and a blue global bar showing overall experiment progress and time remaining.
 - **Manual experiment completion alerts**: success sound + completion popup at the end of a manual run.
 - **Mutual mode lock**: manual and integrated experiments cannot run at the same time; each start button is disabled while the other mode runs.
@@ -393,6 +400,8 @@ Repeat for remaining cycles.
 ```
 
 > **Pause-on-error:** at any motor step above (including the initial `MOVEOUTHOME`/`ROTATIONALHOMING`), if the ESP32 fails to acknowledge a command, or the BLE link drops at any point, the sequence **pauses** instead of cancelling. The countdowns and progress bars freeze, and the UI waits for the operator before retrying the exact command.
+>
+> **Unsupervised mode:** with "Modo no supervisado" enabled, the sequence instead recovers automatically — reconnect serial if needed, reconnect BLE if needed, retry the command once — and **cancels** the experiment if any of those steps fails a second time.
 
 ## Manual Experiment Sequence (detailed)
 
@@ -478,7 +487,7 @@ TOMV3D1_File_20260326_130124_Prueba.csv
 | `sweep_type` | `mode` | Set waveform type |
 | `connect_ble` | — | Scan and connect to ESP32_STEPPER via BLE |
 | `disconnect_ble` | — | Disconnect from ESP32 |
-| `start_experiment` | `sample_names[]`, `enabled_positions[]`, `desorption_time`, `cycle_gap_time`, `cycles` | Start integrated experiment |
+| `start_experiment` | `sample_names[]`, `enabled_positions[]`, `desorption_time`, `cycle_gap_time`, `cycles`, `unsupervised` (bool) | Start integrated experiment |
 | `resume_experiment` | — | User chose **Continuar** after a pause; clears the pause and retries the failed motor command |
 | `start_manual_experiment` | `sample_name`, `pre_conditioning_time` | Start manual experiment (no Banco motors) |
 | `cancel_experiment` | — | Request cancellation (emergency STOP + safety MOVEOUTHOME) |
@@ -505,7 +514,7 @@ TOMV3D1_File_20260326_130124_Prueba.csv
 | `elapsed_time` | `seconds` | Seconds elapsed in current wait |
 | `experiment_pause` | `reasons[]`, `ble_connected`, `mode` | Integrated experiment paused on a motor/BLE error (banner shown) |
 | `experiment_resumed` | — | Pause cleared; experiment continuing |
-| `experiment_complete` | `cancelled` (bool), `error` (str, optional), `message` | Experiment finished, cancelled, or failed with error |
+| `experiment_complete` | `cancelled` (bool), `auto_cancelled` (bool, when cancelled by unsupervised auto-recovery), `error` (str, optional), `message` | Experiment finished, cancelled, or failed with error |
 | `manual_experiment_complete` | `success`, `cancelled`, `sample_name`, `message` | Manual experiment finished |
 | `auto_save_result` | `success`, `filename`, `rows`, `download_url` / `message` | CSV staged on server; client downloads the file |
 | `serial_disconnected` | `message` | Unexpected serial loss |
@@ -566,6 +575,14 @@ The ESP32 responds via notifications on the Status characteristic (`AA000003-…
 - This is expected: a failed motor command or an unexpected BLE drop pauses the experiment instead of cancelling it.
 - Fix the problem (power-cycle the ESP32, clear a mechanical blockage, or click **Reconectar BLE** if the reason is a BLE drop), then click **Continuar** to retry the exact command, or **Cancelar** to abort safely.
 - If the pause banner does not clear after **Continuar**, verify the ESP32 is connected and powered before retrying.
+
+**Experiment cancelled by itself while unsupervised mode is on**
+- This is expected: "Modo no supervisado" retries each error automatically (serial → BLE → motor command) and cancels the experiment if any step fails again.
+- Check the Communication Log for the auto-recovery messages (`Auto-reconexión serial exitosa`, `Auto-reconexión BLE falló`, etc.) to see which step failed.
+- The frontend plays the error tone and shows "Experimento Cancelado — el reintento automático falló".
+
+**Pause banner hides the phone's tab bar**
+- Fixed: the banner is now rendered in-flow below the tabs, so the tabs stay tappable. If you still see it covering content on a small screen, scroll down — the banner sits directly under the tab row.
 
 **Manual experiment start is disabled**
 - This is expected while an integrated experiment is running.

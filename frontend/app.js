@@ -342,6 +342,10 @@ function syncState(state) {
         if (state.cycle_gap_time !== undefined)  setVal('cycleGapTime', state.cycle_gap_time);
         if (state.cycles !== undefined)          setVal('experimentCycles', state.cycles);
         if (state.ble_address !== undefined)     setVal('ble-address', state.ble_address);
+        if (state.unsupervised !== undefined) {
+            const chk = document.getElementById('unsupervisedMode');
+            if (chk) chk.checked = !!state.unsupervised;
+        }
 
         if (Array.isArray(state.positions)) {
             state.positions.forEach((pos, i) => {
@@ -475,6 +479,10 @@ function setupEventListeners() {
     ['desorptionTime', 'experimentCycles', 'preCondTime', 'cycleGapTime'].forEach(id => {
         document.getElementById(id).addEventListener('input', scheduleAutoSave);
     });
+    const unsupervisedModeInput = document.getElementById('unsupervisedMode');
+    if (unsupervisedModeInput) {
+        unsupervisedModeInput.addEventListener('change', scheduleAutoSave);
+    }
     const bleAddressInput = document.getElementById('ble-address');
     if (bleAddressInput) {
         bleAddressInput.addEventListener('input', scheduleAutoSave);
@@ -752,6 +760,7 @@ function startExperiment() {
         cycle_gap_time:        parseFloat(document.getElementById('cycleGapTime').value) || 0,
         cycles:                cycles,
         pre_conditioning_time: parseFloat(document.getElementById('preCondTime').value) || 300,
+        unsupervised:          !!(document.getElementById('unsupervisedMode')?.checked),
     });
 }
 
@@ -1166,7 +1175,9 @@ function _renderPauseBanner(msg) {
         banner = document.createElement('div');
         banner.id = PAUSE_BANNER_ID;
         banner.className = 'experiment-pause-banner';
-        document.body.appendChild(banner);
+        const slot = document.getElementById('pauseBannerSlot');
+        if (slot) slot.appendChild(banner);
+        else document.body.appendChild(banner);
     }
 
     banner.innerHTML = `
@@ -1238,30 +1249,35 @@ function handleExperimentComplete(msg) {
     setExperimentRunning(false);
     const cancelled = msg.cancelled || false;
     const error = msg.error || '';
+    const autoCancelled = !!msg.auto_cancelled;
 
-    if (error) {
+    if (error || autoCancelled) {
         playNotificationTone('error');
     } else if (!cancelled) {
         playNotificationTone('success');
     }
 
+    const isError = error || autoCancelled;
     appendLog(
         error ? `⚠ ERROR: ${error}`
-              : cancelled ? '⚠ EXPERIMENTO CANCELADO'
-                          : '✓ EXPERIMENTO COMPLETADO',
-        error || cancelled ? 'error' : 'success'
+              : autoCancelled ? '⚠ EXPERIMENTO CANCELADO (reintento automático falló)'
+                              : cancelled ? '⚠ EXPERIMENTO CANCELADO'
+                                          : '✓ EXPERIMENTO COMPLETADO',
+        isError || cancelled ? 'error' : 'success'
     );
 
     showModal(
-        error ? 'bg-danger text-white'
-              : cancelled ? 'bg-warning text-dark'
-                          : 'bg-success text-white',
+        isError ? 'bg-danger text-white'
+                : cancelled ? 'bg-warning text-dark'
+                            : 'bg-success text-white',
         error ? '<i class="bi bi-exclamation-triangle-fill"></i> Error en Experimento'
-              : cancelled ? '<i class="bi bi-exclamation-triangle-fill"></i> Experimento Cancelado'
-                          : '<i class="bi bi-check-circle-fill"></i> Experimento Completado',
+              : autoCancelled ? '<i class="bi bi-exclamation-triangle-fill"></i> Experimento Cancelado'
+                              : cancelled ? '<i class="bi bi-exclamation-triangle-fill"></i> Experimento Cancelado'
+                                          : '<i class="bi bi-check-circle-fill"></i> Experimento Completado',
         error ? `<p><strong>Error del motor:</strong></p><p>${error}</p><p>El experimento se detuvo. Revisa el ESP32 y la conexión antes de reiniciar.</p>`
-              : cancelled ? '<p>El experimento fue cancelado. El motor ha vuelto a la posición segura.</p>'
-                          : '<p class="lead">¡Experimento finalizado correctamente!</p><p>Los CSV se han descargado a tu dispositivo.</p>'
+              : autoCancelled ? '<p>El reintento automático falló y el experimento se canceló. Revisa el hardware y el log antes de reiniciar.</p>'
+                              : cancelled ? '<p>El experimento fue cancelado. El motor ha vuelto a la posición segura.</p>'
+                                          : '<p class="lead">¡Experimento finalizado correctamente!</p><p>Los CSV se han descargado a tu dispositivo.</p>'
     );
 
     // Browser notification when page hidden
@@ -1435,6 +1451,7 @@ function scheduleAutoSave() {
                 },
                 sweep_type:     document.getElementById('sweep-type').value,
                 ble_address:    (document.getElementById('ble-address')?.value || '').trim(),
+                unsupervised:   !!(document.getElementById('unsupervisedMode')?.checked),
             },
         });
     }, 500);

@@ -272,6 +272,7 @@ async def websocket_endpoint(ws: WebSocket):
                 "pre_conditioning_time": app_state.pre_conditioning_time,
                 "cycles":            app_state.cycles,
                 "ble_address":       app_state.ble_address,
+                "unsupervised":      app_state.unsupervised,
                 "ble_connected":     banco_controller.connected if banco_controller else False,
                 "experiment_running": experiment_ctrl.experiment_running if experiment_ctrl else False,
                 "experiment_mode": experiment_ctrl.experiment_mode if experiment_ctrl else "",
@@ -371,6 +372,7 @@ async def _handle_message(data: dict, ws: WebSocket):
             pre_conditioning_time = float(data.get("pre_conditioning_time", app_state.pre_conditioning_time))
             cycle_gap_time        = float(data.get("cycle_gap_time", app_state.cycle_gap_time))
             cycles                = int(data.get("cycles", app_state.cycles))
+            unsupervised          = bool(data.get("unsupervised", app_state.unsupervised))
 
             # Persist updated settings
             app_state.positions = [
@@ -381,6 +383,7 @@ async def _handle_message(data: dict, ws: WebSocket):
             app_state.pre_conditioning_time = pre_conditioning_time
             app_state.cycle_gap_time = cycle_gap_time
             app_state.cycles = cycles
+            app_state.unsupervised = unsupervised
             await save_state(app_state)
 
             await experiment_ctrl.start_experiment(
@@ -392,6 +395,9 @@ async def _handle_message(data: dict, ws: WebSocket):
                 pre_conditioning_time=pre_conditioning_time,
                 experiment_params=app_state.experiment_params,
                 sweep_type=app_state.sweep_type,
+                unsupervised=unsupervised,
+                serial_port=app_state.serial_port or "",
+                ble_address=app_state.ble_address or "",
             )
 
         elif msg_type == "start_manual_experiment":
@@ -433,6 +439,7 @@ async def _handle_message(data: dict, ws: WebSocket):
             if "experiment_params"     in cfg: app_state.experiment_params     = cfg["experiment_params"]
             if "sweep_type"            in cfg: app_state.sweep_type            = cfg["sweep_type"]
             if "ble_address"           in cfg: app_state.ble_address           = str(cfg["ble_address"] or "").strip()
+            if "unsupervised"          in cfg: app_state.unsupervised          = bool(cfg["unsupervised"])
             await save_state(app_state)
             await ws.send_json({"type": "config_saved"})
 

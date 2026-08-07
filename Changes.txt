@@ -1,0 +1,89 @@
+Unsupervised mode + banner placement fix — 2026-08-07
+=====================================================
+
+Follow-up to the pause-on-error feature. Adds an optional UNSUPERVISED mode
+(auto-recovery) and fixes the pause banner hiding the phone tab bar.
+
+Banner placement (phone)
+------------------------
+- frontend/index.html: new in-flow slot `<div id="pauseBannerSlot">` right
+  after the tab bar.
+- frontend/app.js: `_renderPauseBanner` inserts the banner into that slot
+  (falls back to document.body).
+- frontend/style.css: `.experiment-pause-banner` is no longer a fixed
+  top-of-page overlay (removed position:fixed / z-index). It now sits in the
+  document flow below the tabs, so it never covers the tab buttons on phones.
+
+Unsupervised (auto-recovery) mode
+---------------------------------
+A checkbox "Modo no supervisado" in Tab 3 -> Parámetros del Experimento.
+When enabled, an error during an integrated experiment triggers automatic
+recovery instead of the interactive pause banner:
+
+  - Failed motor command  -> reconnect serial if needed, reconnect BLE if
+                             needed, then re-send the same command once.
+                             If the retry fails again -> cancel.
+  - Failed BLE connection -> auto-reconnect; if reconnect fails -> cancel.
+  - Failed serial link    -> auto-reopen; if reopen fails -> cancel.
+  - Several incidents at once -> retried in order (serial, then BLE, then
+                             the motor command); if ANY step fails -> cancel.
+
+The experiment continues (timers keep running) while auto-recovery is in
+progress. On auto-cancel the standard safety sequence runs (STOP + MOVEOUTHOME
++ FANOFF) and the frontend plays the error tone + a dedicated modal message.
+
+Backend
+-------
+backend/state.py
+  - AppState.unsupervised: bool = False (persisted in session.json).
+
+backend/serial_handler.py
+  - New on_unexpected_disconnect hook, fired from _read_loop's exception
+    handler via asyncio.create_task (so recovery can reconnect without
+    cancelling the read-loop task itself).
+
+backend/main.py
+  - state_sync includes 'unsupervised'.
+  - save_config accepts 'unsupervised'.
+  - start_experiment reads 'unsupervised', persists it, and passes
+    serial_port + ble_address to the controller for auto-reconnect.
+
+backend/experiment.py
+  - New state: unsupervised, auto_cancelled, _serial_port, _ble_address,
+    _recovery_lock (asyncio.Lock).
+  - Wires serial.on_unexpected_disconnect in __init__.
+  - _auto_recover(): lock-guarded recovery in order serial -> BLE; returns
+    False on the first failed reconnect.
+  - _auto_recover_or_cancel(): unsupervised entry for BLE/serial drops.
+  - _on_unexpected_serial_disconnect(): logs; unsupervised -> recover/cancel.
+  - _pause_from_ble(): unsupervised -> recover/cancel (no banner).
+  - _motor_command(): unsupervised branch — one auto-retry per command
+    (recover serial+BLE first), then auto-cancel via cancel_requested.
+  - _trigger_auto_cancel(): sets auto_cancelled + cancel_requested.
+  - experiment_complete now carries auto_cancelled (both cancel paths).
+  - Resets unsupervised/auto_cancelled in start and finally blocks.
+
+Frontend
+--------
+frontend/index.html
+  - Checkbox 'unsupervisedMode' in Parámetros del Experimento.
+
+frontend/app.js
+  - syncState restores the checkbox; scheduleAutoSave persists it via
+    save_config; startExperiment sends it.
+  - handleExperimentComplete: plays the error tone and shows a dedicated
+    modal/log when msg.auto_cancelled.
+
+Verification
+------------
+- python -m py_compile backend/*.py : PASS
+- node --check frontend/app.js       : PASS
+- Functional tests (temp test_pause.py, not in repo): 13/13 PASS
+  (6 supervised + 7 unsupervised)
+    U1. motor fails once -> auto-retry -> continues (no banner)
+    U2. motor fails twice -> auto-cancel (auto_cancelled=True)
+    U3. BLE drop -> auto-reconnect -> continues
+    U4. BLE reconnect fails -> auto-cancel
+    U5. serial drop -> auto-reconnect -> continues
+    U6. serial reconnect fails -> auto-cancel
+    U7. serial + BLE both down -> recovered in order, then motor retried

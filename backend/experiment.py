@@ -62,6 +62,21 @@ class IntegratedExperimentController:
         # can pause the experiment immediately (not just at the next command).
         self.banco.on_unexpected_disconnect = self._on_unexpected_ble_disconnect
 
+        # Ask the serial handler to notify us on unexpected serial loss so we
+        # can attempt automatic reconnection in unsupervised mode.
+        if getattr(self.serial, "on_unexpected_disconnect", None) is not None:
+            self.serial.on_unexpected_disconnect = self._on_unexpected_serial_disconnect
+
+        # ── Unsupervised (auto-recovery) mode ───────────────────────────────
+        # When enabled, an error triggers an automatic recovery instead of a
+        # user pause: reconnect serial first, then BLE, then retry the failed
+        # motor command once. If any step fails again, cancel the experiment.
+        self.unsupervised: bool = False
+        self.auto_cancelled: bool = False
+        self._serial_port: str = ""
+        self._ble_address: str = ""
+        self._recovery_lock = asyncio.Lock()
+
         # ── Live state (for reconnecting clients) ────────────────────────────
         self.current_position: int        = 0
         self.current_cycle: int           = 0
@@ -92,6 +107,9 @@ class IntegratedExperimentController:
         pre_conditioning_time: float,
         experiment_params: Dict,
         sweep_type: str = "TR",
+        unsupervised: bool = False,
+        serial_port: str = "",
+        ble_address: str = "",
     ):
         if self.experiment_running:
             await self._log("Experiment already running — ignoring request.")
@@ -111,6 +129,10 @@ class IntegratedExperimentController:
         self.experiment_paused = False
         self.pause_reasons = []
         self._resume_event = None
+        self.unsupervised = bool(unsupervised)
+        self.auto_cancelled = False
+        self._serial_port = serial_port or ""
+        self._ble_address = ble_address or ""
 
         self.experiment_running = True
         self.experiment_mode = "integrated"
@@ -143,6 +165,8 @@ class IntegratedExperimentController:
         self.experiment_paused = False
         self.pause_reasons = []
         self._resume_event = None
+        self.unsupervised = False
+        self.auto_cancelled = False
         self.experiment_running = True
         self.experiment_mode = "manual"
         self._task = asyncio.create_task(
@@ -201,10 +225,78 @@ class IntegratedExperimentController:
 
     async def _pause_from_ble(self):
         """Pause an experiment because the BLE connection was lost."""
+        if self.unsupervised:
+            await self._auto_recover_or_cancel()
+            return
         await self._pause_for_user({
             "type": "ble",
             "message": "Conexión BLE con el ESP32 perdida inesperadamente.",
         })
+
+    async def _on_unexpected_serial_disconnect(self):
+        """Serial link dropped while an experiment was running."""
+        if not self.experiment_running or self.experiment_mode != "integrated":
+            return
+        await self._log("Serial connection lost unexpectedly")
+        if self.unsupervised:
+            await self._auto_recover_or_cancel()
+
+    async def _auto_recover_or_cancel(self):
+        """Unsupervised entry point for BLE/serial drops: recover or cancel."""
+        if self.banco.cancel_requested:
+            return
+        recovered = await self._auto_recover()
+        if not recovered and not self.banco.cancel_requested:
+            await self._trigger_auto_cancel()
+
+    async def _auto_recover(self) -> bool:
+        """
+        Unsupervised recovery, in order: serial first, then BLE.
+        Returns True only if both connections are healthy afterwards.
+        Used by unsupervised mode (motor command retries, BLE drops,
+        serial drops). Lock-guarded so concurrent triggers don't reconnect
+        at the same time.
+        """
+        async with self._recovery_lock:
+            if self.banco.cancel_requested:
+                return False
+
+            # 1) Serial
+            if not self.serial.is_connected:
+                await self._log("Modo no supervisado: reconectando serial (TOMV3)…")
+                if not self._serial_port:
+                    await self._log("✗ No serial port configured for auto-reconnect")
+                    return False
+                try:
+                    ok = await self.serial.connect(self._serial_port)
+                except Exception as e:
+                    await self._log(f"✗ Serial auto-reconnect error: {e}")
+                    ok = False
+                if not ok:
+                    await self._log("✗ Auto-reconexión serial falló — cancelando experimento")
+                    return False
+                await self._log("✓ Auto-reconexión serial exitosa")
+
+            # 2) BLE
+            if not self.banco.connected:
+                await self._log("Modo no supervisado: reconectando ESP32 (BLE)…")
+                try:
+                    await self.banco.connect(address=self._ble_address or None)
+                except Exception as e:
+                    await self._log(f"✗ BLE auto-reconnect error: {e}")
+                    self.banco.connected = False
+                if not self.banco.connected:
+                    await self._log("✗ Auto-reconexión BLE falló — cancelando experimento")
+                    return False
+                await self._log("✓ Auto-reconexión BLE exitosa")
+
+            return True
+
+    async def _trigger_auto_cancel(self):
+        """Mark the experiment as auto-cancelled and stop it via the normal path."""
+        self.auto_cancelled = True
+        self.banco.cancel_requested = True
+        await self.cancel_experiment()
 
     async def _pause_for_user(self, reason: Dict):
         """
@@ -257,10 +349,13 @@ class IntegratedExperimentController:
         """
         Send a motor command with pause-on-error behaviour:
           - on success returns True
-          - on failure pauses, waits for the user, then retries the command
+          - supervised: on failure pauses, waits for the user, then retries
+          - unsupervised: on failure auto-recovers (serial + BLE) and retries
+            once; if the retry (or a recovery step) fails, auto-cancels
           - returns False only when a cancellation has been requested
             (the run loop then handles the cancellation path).
         """
+        auto_retried = False
         while True:
             if self.banco.cancel_requested:
                 return False
@@ -273,6 +368,21 @@ class IntegratedExperimentController:
                 return False
             if ok:
                 return True
+
+            if self.unsupervised:
+                if auto_retried:
+                    await self._log(f"✗ Auto-reintento falló para {command} — cancelando experimento")
+                    self.auto_cancelled = True
+                    self.banco.cancel_requested = True
+                    return False
+                auto_retried = True
+                await self._log(f"Comando {command} falló — intentando recuperación automática…")
+                recovered = await self._auto_recover()
+                if not recovered:
+                    self.auto_cancelled = True
+                    self.banco.cancel_requested = True
+                    return False
+                continue  # retry the same command
 
             await self._pause_for_user({
                 "type": "motor",
@@ -527,6 +637,7 @@ class IntegratedExperimentController:
                 await self._log("=" * 60)
                 await self._status("Experiment cancelled")
                 await self._emit("experiment_complete", cancelled=True,
+                                 auto_cancelled=self.auto_cancelled,
                                  message="Experiment cancelled")
             elif self.experiment_error:
                 await self._log("=" * 60)
@@ -557,6 +668,7 @@ class IntegratedExperimentController:
             self.banco.motor_is_in = False
             await self._status("Experiment cancelled")
             await self._emit("experiment_complete", cancelled=True,
+                             auto_cancelled=self.auto_cancelled,
                              message="Experiment cancelled")
 
         except Exception as e:
@@ -573,6 +685,8 @@ class IntegratedExperimentController:
             self.experiment_paused = False
             self.pause_reasons = []
             self._resume_event = None
+            self.unsupervised = False
+            self.auto_cancelled = False
             self.current_position = 0
             self.current_cycle    = 0
             self.cycles_total     = 0

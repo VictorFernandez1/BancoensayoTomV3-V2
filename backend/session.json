@@ -23,45 +23,45 @@
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     },
     {
-      "enabled": true,
+      "enabled": false,
       "name": ""
     }
   ],
   "desorption_time": 60.0,
   "pre_conditioning_time": 180.0,
-  "cycle_gap_time": 30.0,
-  "cycles": 2,
+  "cycle_gap_time": 0.0,
+  "cycles": 3,
   "ble_address": "1C:DB:D4:3C:80:EA"
 }

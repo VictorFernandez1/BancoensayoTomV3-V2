@@ -65,6 +65,7 @@ class AppState:
     cycle_gap_time: float = 0.0
     cycles: int = 1
     ble_address: str = ""
+    unsupervised: bool = False
 
 
 async def save_state(state: AppState):
