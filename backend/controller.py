@@ -108,6 +108,13 @@ class BleController:
         self._log_sync(f"✗ Fan OFF failed: {result}")
         return False
 
+    async def optical_sensor_is_low(self) -> bool:
+        """Read the active-low carousel optical sensor."""
+        result = await self.send_command_raw("SENSORGPIO5")
+        is_low = result == "SENSOR:LOW"
+        self._log_sync(f"Optical sensor: {result}")
+        return is_low
+
     async def stop(self):
         """Emergency STOP — immediately halt any motor movement."""
         cf = asyncio.run_coroutine_threadsafe(self._ble_stop(), self._ble_loop)

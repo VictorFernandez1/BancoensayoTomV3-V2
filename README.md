@@ -55,6 +55,9 @@ Integrated Experiment Controller orchestrates the full measurement workflow:
   - Multiple causes (BLE drop + motor failure) merge into a single banner with deduplicated reasons.
   - Plays a high-pitched warning tone when the pause banner appears.
   - The banner is rendered **in-flow below the tab bar**, so it never covers the tab buttons — important on phones.
+- **Pre-MOVEINHOME optical sensor check**: immediately before every integrated `MOVEINHOME`, the backend queries the ESP32 optical sensor with `SENSORGPIO5`. The move proceeds only when the response is `SENSOR:LOW`.
+  - In supervised mode, a failed check pauses the experiment in the existing banner. **Continuar** performs the position-specific recovery movement and checks the sensor again; **Cancelar** runs the normal safety sequence.
+  - In unsupervised mode, a failed check triggers one automatic recovery: `ROTATIONALHOMING` for position 1, or `MOVECLOCKWISE:<position>` for other positions. If the second sensor check is not `SENSOR:LOW`, the experiment is auto-cancelled safely.
 - **Unsupervised (auto-recovery) mode**: a "Modo no supervisado" checkbox in Tab 3 → Parámetros del Experimento. When enabled, an error during an integrated experiment is handled **automatically** instead of pausing:
   - Failed motor command → reconnect serial if needed, reconnect BLE if needed, then re-send the command once; if it fails again → cancel.
   - Failed BLE connection → auto-reconnect; if that fails → cancel.
@@ -381,27 +384,28 @@ Initial one-time phase (before cycle 1):
 For each cycle (1 … Ciclos):
   For each enabled position (in order):
     1. clear buffers       — TOMV3 data arrays reset
-    2. MOVEINHOME          — arm lowers onto the sample
-    3. Pre-conditioning    — configurable countdown (default 300 s)
-    4. EXPER               — TOMV3 sweep command sent
-    5. Acquisition wait    — (Steps+1) × VNCycles × 2 + 30 s
-    6. MOVEOUTHOME         — arm retracts
-    7. FANON               — start desorption fan
-    8. MOVECLOCKWISE       — rotate to next position (skipped after last)
-    9. Desorption wait     — configurable recovery time
-    10. FANOFF             — stop desorption fan
-    11. Auto-save CSV      — downloaded to client device (after desorption)
+    2. SENSORGPIO5         — optical sensor must return SENSOR:LOW
+    3. MOVEINHOME          — arm lowers onto the sample
+    4. Pre-conditioning    — configurable countdown (default 300 s)
+    5. EXPER               — TOMV3 sweep command sent
+    6. Acquisition wait    — (Steps+1) × VNCycles × 2 + 30 s
+    7. MOVEOUTHOME         — arm retracts
+    8. FANON               — start desorption fan
+    9. MOVECLOCKWISE       — rotate to next position (skipped after last)
+    10. Desorption wait    — configurable recovery time
+    11. FANOFF             — stop desorption fan
+    12. Auto-save CSV      — downloaded to client device (after desorption)
 
   After all positions:
-    12. ROTATIONALHOMING   — return home
-    13. Cycle gap (if not last cycle) — configurable delay between cycles (0 s = skip)
+    13. ROTATIONALHOMING   — return home
+    14. Cycle gap (if not last cycle) — configurable delay between cycles (0 s = skip)
 
 Repeat for remaining cycles.
 ```
 
-> **Pause-on-error:** at any motor step above (including the initial `MOVEOUTHOME`/`ROTATIONALHOMING`), if the ESP32 fails to acknowledge a command, or the BLE link drops at any point, the sequence **pauses** instead of cancelling. The countdowns and progress bars freeze, and the UI waits for the operator before retrying the exact command.
+> **Pause-on-error:** at any motor step above (including the initial `MOVEOUTHOME`/`ROTATIONALHOMING`), if the ESP32 fails to acknowledge a command, the BLE link drops at any point, or the pre-`MOVEINHOME` sensor check is not `SENSOR:LOW`, the sequence **pauses** instead of cancelling. The countdowns and progress bars freeze, and the UI waits for the operator. For a sensor failure, **Continuar** performs the recovery movement (`ROTATIONALHOMING` for position 1 or `MOVECLOCKWISE:<position>` otherwise) and then retries the sensor check.
 >
-> **Unsupervised mode:** with "Modo no supervisado" enabled, the sequence instead recovers automatically — reconnect serial if needed, reconnect BLE if needed, retry the command once — and **cancels** the experiment if any of those steps fails a second time.
+> **Unsupervised mode:** with "Modo no supervisado" enabled, the sequence instead recovers automatically — reconnect serial if needed, reconnect BLE if needed, retry the command once, or recover and retry a failed sensor check once — and **cancels** the experiment if any of those steps fails a second time.
 
 ## Manual Experiment Sequence (detailed)
 
@@ -539,6 +543,8 @@ Commands sent to the ESP32 (`ESP32_STEPPER`) over BLE — written to the Command
 | `FANOFF` | Turn desorption fan OFF |
 | `SETINTERVAL:<µs>` | Set the step pulse interval in microseconds |
 
+The ESP32 also supports the optical sensor query `SENSORGPIO5`. It returns `SENSOR:LOW` when the active-low carousel optical sensor is detected and `SENSOR:HIGH` otherwise. The backend uses this query immediately before every integrated `MOVEINHOME`.
+
 The ESP32 responds via notifications on the Status characteristic (`AA000003-…`):
 1. `OK` — command acknowledged, movement starting (ignored by the backend)
 2. `COMPLETE` — movement finished successfully
@@ -572,12 +578,14 @@ The ESP32 responds via notifications on the Status characteristic (`AA000003-…
 - The cancel sequence is: emergency `STOP` (halts the motor mid-step) → brief settle → async task cancel → safety `MOVEOUTHOME`. This typically completes in under a second.
 
 **Experiment is paused on an error**
-- This is expected: a failed motor command or an unexpected BLE drop pauses the experiment instead of cancelling it.
+- This is expected: a failed motor command, an unexpected BLE drop, or an optical sensor check that does not return `SENSOR:LOW` pauses the experiment instead of cancelling it.
 - Fix the problem (power-cycle the ESP32, clear a mechanical blockage, or click **Reconectar BLE** if the reason is a BLE drop), then click **Continuar** to retry the exact command, or **Cancelar** to abort safely.
+- For a sensor-check pause, **Continuar** first runs `ROTATIONALHOMING` for position 1 or `MOVECLOCKWISE:<position>` for another position, then checks the sensor again.
 - If the pause banner does not clear after **Continuar**, verify the ESP32 is connected and powered before retrying.
 
 **Experiment cancelled by itself while unsupervised mode is on**
 - This is expected: "Modo no supervisado" retries each error automatically (serial → BLE → motor command) and cancels the experiment if any step fails again.
+- A failed pre-`MOVEINHOME` sensor check is recovered once with the position-specific movement and cancelled if the second sensor reading is still not `SENSOR:LOW`.
 - Check the Communication Log for the auto-recovery messages (`Auto-reconexión serial exitosa`, `Auto-reconexión BLE falló`, etc.) to see which step failed.
 - The frontend plays the error tone and shows "Experimento Cancelado — el reintento automático falló".
 

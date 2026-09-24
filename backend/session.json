@@ -1,5 +1,5 @@
 {
-  "serial_port": "COM16",
+  "serial_port": "COM17",
   "sweep_type": "TR",
   "experiment_params": {
     "TMin": 200,
@@ -12,19 +12,19 @@
   "positions": [
     {
       "enabled": true,
-      "name": "HB_2"
-    },
-    {
-      "enabled": true,
-      "name": ""
-    },
-    {
-      "enabled": true,
-      "name": ""
+      "name": "Herido_1D"
     },
     {
       "enabled": false,
-      "name": ""
+      "name": "Herido_2D"
+    },
+    {
+      "enabled": false,
+      "name": "Botrytis_1D_1"
+    },
+    {
+      "enabled": false,
+      "name": "Botrytis_1D_2"
     },
     {
       "enabled": false,
@@ -59,7 +59,7 @@
       "name": ""
     }
   ],
-  "desorption_time": 60.0,
+  "desorption_time": 120.0,
   "pre_conditioning_time": 180.0,
   "cycle_gap_time": 0.0,
   "cycles": 3,

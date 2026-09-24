@@ -396,6 +396,58 @@ class IntegratedExperimentController:
             if await self._await_resume_or_cancel():
                 return False
 
+    async def _check_sensor_before_move_in(self, position: int) -> bool:
+        """Require the carousel optical sensor to be LOW before arm entry."""
+        recovery_command = (
+            "ROTATIONALHOMING"
+            if position == 1
+            else f"MOVECLOCKWISE:{position}"
+        )
+        recovery_label = (
+            "Recovering carousel home"
+            if position == 1
+            else f"Recovering position {position}"
+        )
+        recovered_once = False
+
+        while not self.banco.cancel_requested:
+            await self._status(f"Pos {position}: Checking optical sensor…")
+            sensor_low = await self.banco.optical_sensor_is_low()
+            if sensor_low:
+                await self._log(f"✓ Optical sensor LOW before position {position}")
+                return True
+
+            await self._log(
+                f"✗ Optical sensor is not LOW before position {position}"
+            )
+
+            if self.unsupervised:
+                if recovered_once:
+                    await self._log(
+                        "✗ Optical sensor retry failed — cancelling experiment"
+                    )
+                    self.auto_cancelled = True
+                    self.banco.cancel_requested = True
+                    return False
+                recovered_once = True
+            else:
+                await self._pause_for_user({
+                    "type": "sensor",
+                    "command": recovery_command,
+                    "message": (
+                        f"El sensor óptico no está LOW antes de mover a la posición {position}. "
+                        "Revisa el carrusel antes de continuar."
+                    ),
+                })
+                if await self._await_resume_or_cancel():
+                    return False
+
+            ok = await self._motor_command(recovery_label, recovery_command)
+            if not ok or self.banco.cancel_requested:
+                return False
+
+        return False
+
     # ── Main sequence ─────────────────────────────────────────────────────────
 
     async def _run(
@@ -529,7 +581,12 @@ class IntegratedExperimentController:
                     await self.serial.clear()
 
 
-                    # 2. MOVEINHOME ────────────────────────────────────────────
+                    # 2. Verify the carousel sensor before arm entry.
+                    sensor_ok = await self._check_sensor_before_move_in(position)
+                    if not sensor_ok or self.banco.cancel_requested:
+                        break
+
+                    # 3. MOVEINHOME ────────────────────────────────────────────
                     ok = await self._motor_command(
                         f"Pos {position}: Moving IN", "MOVEINHOME"
                     )
