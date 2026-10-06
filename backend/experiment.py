@@ -582,9 +582,9 @@ class IntegratedExperimentController:
 
 
                     # 2. Verify the carousel sensor before arm entry.
-                    sensor_ok = await self._check_sensor_before_move_in(position)
-                    if not sensor_ok or self.banco.cancel_requested:
-                        break
+                    #sensor_ok = await self._check_sensor_before_move_in(position)
+                    #if not sensor_ok or self.banco.cancel_requested:
+                        #break
 
                     # 3. MOVEINHOME ────────────────────────────────────────────
                     ok = await self._motor_command(
