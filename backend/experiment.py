@@ -476,8 +476,8 @@ class IntegratedExperimentController:
             acq_duration = (steps + 1) * veggie_cycles * 2 + 30
 
             # Runtime estimate includes motor movements per position and cycle return-home rotations.
-            linear_motor_time = 18       # MOVEDOWN / MOVEUP (seconds each)
-            rotational_motor_time = 1 # MOVECLOCKWISE / MOVECOUNTERCLOCKWISE (seconds each)
+            linear_motor_time = 23       # MOVEDOWN / MOVEUP (seconds each)
+            rotational_motor_time = 1.5 # MOVECLOCKWISE / MOVECOUNTERCLOCKWISE (seconds each)
 
             total_positions = len(enabled_positions)
             per_position_seconds = (

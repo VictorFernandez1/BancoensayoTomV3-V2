@@ -15,52 +15,52 @@
       "name": "Herido_1D"
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": "Herido_2D"
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": "Botrytis_1D_1"
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": "Botrytis_1D_2"
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": ""
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": ""
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": ""
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": ""
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": ""
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": ""
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": ""
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": ""
     }
   ],
   "desorption_time": 120.0,
-  "pre_conditioning_time": 180.0,
+  "pre_conditioning_time": 90.0,
   "cycle_gap_time": 0.0,
   "cycles": 3,
   "ble_address": "1C:DB:D4:3C:80:EA"
