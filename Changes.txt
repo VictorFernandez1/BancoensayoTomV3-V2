@@ -87,3 +87,16 @@ Verification
     U5. serial drop -> auto-reconnect -> continues
     U6. serial reconnect fails -> auto-cancel
     U7. serial + BLE both down -> recovered in order, then motor retried
+
+Linear movement load detection
+------------------------------
+The ESP32 now reports a blocked linear movement as
+`ERROR: Something is blocking the movement. SG_RESULT:<value>`.
+
+- Supervised integrated experiments pause with the existing banner and ask the
+  operator to check for an obstruction; Continue retries the movement.
+- Unsupervised integrated experiments issue `MOVEOUTHOME` before retrying the
+  failed linear movement. A failed recovery or repeated load fault cancels the
+  experiment through the existing safety path.
+- The special behavior applies only to `MOVEINHOME` and `MOVEOUTHOME`;
+  generic failures and rotational/fan/manual flows are unchanged.

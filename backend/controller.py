@@ -80,6 +80,11 @@ class BleController:
         Dispatch a motor command to the BLE loop and await COMPLETE.
         Fully awaitable from the experiment loop.
         """
+        result = await self.send_command_status(command)
+        return result in ("COMPLETE", "STOPPED")
+
+    async def send_command_status(self, command: str) -> str:
+        """Dispatch a motor command and return its raw ESP32 status."""
         cf = asyncio.run_coroutine_threadsafe(self._ble_send(command), self._ble_loop)
         return await asyncio.wrap_future(cf)
 
@@ -216,10 +221,10 @@ class BleController:
         self._log_sync("Disconnected from ESP32")
         self._emit_sync("connection_status", message="Disconnected", connected=False)
 
-    async def _ble_send(self, command: str) -> bool:
+    async def _ble_send(self, command: str) -> str:
         if not self.connected or not self._client:
             self._log_sync("✗ Not connected to ESP32")
-            return False
+            return "ERROR"
         try:
             self._log_sync(f"→ {command}")
             # Future lives on the BLE loop — safe to create and await here
@@ -233,17 +238,17 @@ class BleController:
             self._log_sync(f"← {result}")
             if result in ("COMPLETE", "STOPPED"):
                 self._log_sync("✓ Movement completed")
-                return True
+                return result
             else:
                 self._log_sync(f"✗ Unexpected response: {result}")
-                return False
+                return result
         except asyncio.TimeoutError:
             self._log_sync(f"✗ Timeout waiting for response to {command}")
-            return False
+            return "TIMEOUT"
         except Exception as e:
             self._log_sync(f"✗ Error sending {command}: {e}")
             self.connected = False
-            return False
+            return "ERROR"
         finally:
             self._pending_future = None
 

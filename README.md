@@ -64,6 +64,10 @@ Integrated Experiment Controller orchestrates the full measurement workflow:
   - Failed serial link → auto-reopen; if that fails → cancel.
   - Several incidents at once are retried in order (serial → BLE → motor); if any step fails → cancel.
   - On auto-cancel the standard safety sequence runs and the frontend plays the **error tone** with a dedicated modal.
+- **Linear movement load detection**: the ESP32 reports blocked `MOVEINHOME` or `MOVEOUTHOME` movements as `ERROR: Something is blocking the movement. SG_RESULT:<value>`.
+  - In supervised mode, the experiment pauses with the existing banner and asks the operator to check for anything blocking the motor. **Continuar** retries the failed movement.
+  - In unsupervised mode, the system sends `MOVEOUTHOME` before retrying the failed linear movement. If that recovery fails, or the load fault appears again, the experiment is cancelled through the standard safety path.
+  - This special handling applies only to linear homing commands; rotational movement, fan commands, manual experiments, and generic motor failures keep their existing behavior.
 - **Dual progress bars** during an experiment: a green per-phase bar (pre-conditioning / acquisition / desorption) and a blue global bar showing overall experiment progress and time remaining.
 - **Manual experiment completion alerts**: success sound + completion popup at the end of a manual run.
 - **Mutual mode lock**: manual and integrated experiments cannot run at the same time; each start button is disabled while the other mode runs.
@@ -634,4 +638,3 @@ The ESP32 responds via notifications on the Status characteristic (`AA000003-…
 ## Author
 
 V. Fernández
-

@@ -356,18 +356,63 @@ class IntegratedExperimentController:
             (the run loop then handles the cancellation path).
         """
         auto_retried = False
+        load_fault_retried = False
         while True:
             if self.banco.cancel_requested:
                 return False
 
             await self._status(f"{label}…")
             await self._log(command)
-            ok = await self.banco.send_command(command)
+            status = await self._send_motor_command_status(command)
+            ok = status in ("COMPLETE", "STOPPED")
 
             if self.banco.cancel_requested:
                 return False
             if ok:
                 return True
+
+            if self._is_linear_load_fault(command, status):
+                if self.unsupervised:
+                    if load_fault_retried:
+                        await self._log(
+                            "✗ Load fault repeated after automatic recovery — "
+                            "cancelling experiment"
+                        )
+                        self.auto_cancelled = True
+                        self.banco.cancel_requested = True
+                        return False
+
+                    load_fault_retried = True
+                    await self._log(
+                        "Linear movement blocked — moving OUT before retry"
+                    )
+                    recovery_status = await self._send_motor_command_status(
+                        "MOVEOUTHOME"
+                    )
+                    recovery_ok = recovery_status in ("COMPLETE", "STOPPED")
+                    if not recovery_ok:
+                        await self._log(
+                            "✗ Automatic MOVEOUTHOME recovery failed — "
+                            "cancelling experiment"
+                        )
+                        self.auto_cancelled = True
+                        self.banco.cancel_requested = True
+                        return False
+                    self.banco.motor_is_in = False
+                    continue
+
+                await self._pause_for_user({
+                    "type": "motor_load",
+                    "command": command,
+                    "message": (
+                        f"El movimiento {label} parece bloqueado. "
+                        "Comprueba si hay algo que impida el movimiento "
+                        "del motor."
+                    ),
+                })
+                if await self._await_resume_or_cancel():
+                    return False
+                continue
 
             if self.unsupervised:
                 if auto_retried:
@@ -395,6 +440,21 @@ class IntegratedExperimentController:
             })
             if await self._await_resume_or_cancel():
                 return False
+
+    async def _send_motor_command_status(self, command: str) -> str:
+        """Send a motor command while retaining the ESP32 response status."""
+        send_with_status = getattr(self.banco, "send_command_status", None)
+        if send_with_status is not None:
+            return str(await send_with_status(command)).strip().upper()
+        return "COMPLETE" if await self.banco.send_command(command) else "ERROR"
+
+    @staticmethod
+    def _is_linear_load_fault(command: str, status: str) -> bool:
+        """Return whether a linear homing command hit the load detector."""
+        linear_command = command in ("MOVEINHOME", "MOVEOUTHOME")
+        return linear_command and status.startswith(
+            "ERROR: SOMETHING IS BLOCKING THE MOVEMENT."
+        )
 
     async def _check_sensor_before_move_in(self, position: int) -> bool:
         """Require the carousel optical sensor to be LOW before arm entry."""
@@ -999,4 +1059,3 @@ class IntegratedExperimentController:
         ts = datetime.now().strftime("%H:%M:%S")
         await self._emit("log", message=f"[{ts}] {message}",
                          timestamp=datetime.now().isoformat())
-
